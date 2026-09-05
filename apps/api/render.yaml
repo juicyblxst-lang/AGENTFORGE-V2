@@ -5,9 +5,12 @@ services:
     rootDir: apps/api
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: NETWORK
         value: bsc-testnet
+      - key: RPC_URL
+        value: https://data-seed-prebsc-1-s1.bnbchain.org:8545
       - key: CORS_ORIGINS
         sync: false
       - key: EIGHTYFOUR_SCAN_API_KEY
@@ -19,4 +22,13 @@ services:
       - key: PROVIDER_AGENT_BASE_URL
         sync: false
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: agentforge-db
+          property: connectionString
+      - key: SERVICE_PRICE_UNITS
+        value: '1'
+      - key: POLL_INTERVAL_SECONDS
+        value: '15'
+databases:
+  - name: agentforge-db
+    plan: free

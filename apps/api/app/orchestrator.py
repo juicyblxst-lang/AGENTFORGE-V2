@@ -1,7 +1,7 @@
 import asyncio, json, time
 import httpx
 from .config import settings
-from .db import upsert, get
+from .db import upsert, get, claim_execution
 from .discovery import get_agent
 from .chain_dynamic import read_job, dispute_window
 
@@ -33,8 +33,10 @@ async def execute_external(agent,task):
                     payload={'jsonrpc':'2.0','id':str(time.time_ns()),'method':'message/send','params':{'message':{'role':'user','parts':[{'kind':'text','text':task}]}}}
                 else: payload={'task':task}
                 r=await http.post(url,json=payload,headers={'content-type':'application/json','accept':'application/json'}); r.raise_for_status()
-                try:return r.json()
-                except ValueError:return {'text':r.text}
+                try: result=r.json()
+                except ValueError: result={'text':r.text}
+                if result is None or result=='' or result=={}: raise RuntimeError('Agent returned an empty response')
+                return result
             except Exception as e:last=e
     raise RuntimeError(f'Agent endpoint failed: {last}')
 async def process_job(job_id:int):
@@ -45,17 +47,25 @@ async def process_job(job_id:int):
     if str(job.provider).lower()!=str(settings.provider_address).lower() or int(job.status)!=1:return
     record=get(job_id)
     if not record:return
-    agent=await get_agent(int(record['agent_id']))
-    if str(agent.get('owner','')).lower()!=str(settings.provider_address).lower():
-        upsert(job_id,status='error',error='Configured provider wallet does not own the selected ERC-8004 agent'); return
-    upsert(job_id,status='executing')
-    result=await execute_external(agent,job.description)
-    ops=ERC8183JobOps(wallet,network=settings.network,storage_provider=LocalStorageProvider('.agent-data'),service_price=0,agent_url=settings.provider_agent_base_url)
-    submitted=ops.submit_result(job_id,json.dumps(result,ensure_ascii=False),{'agentforge_agent':record['agent_id']})
-    if not submitted.get('success',False): raise RuntimeError(submitted.get('error') or 'submit_result failed')
-    submit_tx=submitted.get('txHash') or submitted.get('tx_hash'); state=read_job(job_id)
-    if state['statusName']!='submitted': raise RuntimeError(f'On-chain submit verification failed: {state}')
-    upsert(job_id,status='submitted',submit_tx=submit_tx,result_json=json.dumps(result,ensure_ascii=False))
+    if not claim_execution(job_id): return
+    try:
+        agent=await get_agent(int(record['agent_id']))
+        if not agent.get('identityVerified'): raise RuntimeError('Selected ERC-8004 agent could not be re-verified at execution time')
+        if not agent.get('endpoints'): raise RuntimeError('Selected ERC-8004 agent has no executable endpoint at execution time')
+        upsert(job_id,status='executing')
+        result=await execute_external(agent,job.description or f'Execute AgentForge job {job_id}')
+        deliverable=json.dumps(result,ensure_ascii=False,separators=(',',':'))
+        if not deliverable or deliverable=='{}': raise RuntimeError('Execution produced no valid deliverable')
+        ops=ERC8183JobOps(wallet,network=settings.network,storage_provider=LocalStorageProvider('.agent-data'),service_price=0,agent_url=settings.provider_agent_base_url)
+        submitted=ops.submit_result(job_id,deliverable,{'agentforge_agent':record['agent_id']})
+        if not submitted.get('success',False): raise RuntimeError(submitted.get('error') or 'submit_result failed')
+        submit_tx=submitted.get('txHash') or submitted.get('tx_hash')
+        if not submit_tx: raise RuntimeError('submit_result returned no transaction hash')
+        state=read_job(job_id)
+        if state['statusName']!='submitted': raise RuntimeError(f'On-chain submit verification failed: {state}')
+        upsert(job_id,status='submitted',submit_tx=submit_tx,result_json=deliverable)
+    except Exception as e:
+        upsert(job_id,status='error',error=str(e))
 async def reconcile_once():
     if not provider_ready(): return
     _,client=provider_client(); counter=int(client.commerce.job_counter())
@@ -66,7 +76,11 @@ async def reconcile_once():
             if state['statusName']=='funded': await process_job(jid)
             elif state['statusName']=='submitted' and int(state['submittedAt'])+dispute_window()<=int(time.time()):
                 result=client.settle(jid)
-                if result.get('success',False) and read_job(jid)['statusName']=='completed': upsert(jid,status='completed',settle_tx=result.get('txHash') or result.get('tx_hash'))
+                if not result.get('success',False): raise RuntimeError(result.get('error') or 'settle failed')
+                settle_tx=result.get('txHash') or result.get('tx_hash')
+                if not settle_tx: raise RuntimeError('settle returned no transaction hash')
+                if read_job(jid)['statusName']=='completed': upsert(jid,status='completed',settle_tx=settle_tx)
+                else: raise RuntimeError('Settlement receipt succeeded but on-chain job is not Completed')
         except Exception as e:
             existing=get(jid)
             if existing and existing.get('status') not in ('submitted','completed'): upsert(jid,status='error',error=str(e))

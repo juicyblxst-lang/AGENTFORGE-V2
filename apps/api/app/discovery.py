@@ -42,13 +42,10 @@ def _explicit_registry(a,reg0): return a.get('agent_registry') or a.get('agentRe
 def _verify_identity(agent):
     try:
         parts=agent['agentRegistry'].split(':',2)
-        if len(parts)!=3 or parts[0]!='eip155' or int(parts[1])!=network_config()['chainId']:
-            return {'verified':False,'reason':'registry does not target configured BSC chain'}
-        if parts[2].lower()!=network_config()['identityRegistry'].lower():
-            return {'verified':False,'reason':'registry address does not match canonical ERC-8004 deployment'}
+        if len(parts)!=3 or parts[0]!='eip155' or int(parts[1])!=network_config()['chainId']: return {'verified':False,'reason':'registry does not target configured BSC chain'}
+        if parts[2].lower()!=network_config()['identityRegistry'].lower(): return {'verified':False,'reason':'registry address does not match canonical ERC-8004 deployment'}
         w3=Web3(Web3.HTTPProvider(settings.rpc_url,request_kwargs={'timeout':10}))
-        if not w3.is_connected() or w3.eth.chain_id!=network_config()['chainId']:
-            return {'verified':False,'reason':'identity RPC unavailable or wrong chain'}
+        if not w3.is_connected() or w3.eth.chain_id!=network_config()['chainId']: return {'verified':False,'reason':'identity RPC unavailable or wrong chain'}
         c=w3.eth.contract(address=Web3.to_checksum_address(network_config()['identityRegistry']),abi=IDENTITY_ABI)
         owner=c.functions.ownerOf(int(agent['agentId'])).call(); wallet=c.functions.getAgentWallet(int(agent['agentId'])).call(); uri=c.functions.tokenURI(int(agent['agentId'])).call()
         return {'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri}
@@ -128,8 +125,9 @@ async def _discover_from_chain(limit=100):
         metadata=await _fetch_metadata(uri or event_uri)
         if not isinstance(metadata,dict): metadata={}
         metadata=dict(metadata); metadata.update({'agentId':aid,'agentRegistry':f'eip155:{network_config()["chainId"]}:{network_config()["identityRegistry"]}','owner':owner or event_owner,'agentWallet':wallet})
-        found=normalize({'data':[metadata]},verify=True)
-        if found: result.append(found[0])
+        found=normalize({'data':[metadata]},verify=False)
+        if found:
+            agent=found[0]; agent['identityVerified']=True; agent['identityProof']={'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri or event_uri}; result.append(agent)
     return result
 
 async def discover(limit=100):
@@ -157,8 +155,9 @@ async def get_agent(agent_id):
         metadata=await _fetch_metadata(uri)
         if not isinstance(metadata,dict): metadata={}
         metadata.update({'agentId':int(agent_id),'agentRegistry':f'eip155:{network_config()["chainId"]}:{network_config()["identityRegistry"]}','owner':owner,'agentWallet':wallet})
-        found=normalize({'data':[metadata]},verify=True)
+        found=normalize({'data':[metadata]},verify=False)
         if not found: raise ValueError('Agent is not a verified ERC-8004 identity on the configured BSC network')
+        found[0]['identityVerified']=True; found[0]['identityProof']={'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri}
         return found[0]
     data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}'); found=normalize({'data':[data]},verify=True)
     if not found: raise ValueError('Agent is not a verified ERC-8004 identity on the configured BSC network')

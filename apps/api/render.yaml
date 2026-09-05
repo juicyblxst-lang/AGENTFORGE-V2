@@ -18,3 +18,5 @@ services:
         sync: false
       - key: PROVIDER_AGENT_BASE_URL
         sync: false
+      - key: DATABASE_URL
+        sync: false

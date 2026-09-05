@@ -10,7 +10,7 @@ BSC_NETWORKS = {
         'identityRegistry': '0x8004A818BFB912233c491871b3d84c89A494BD9e',
         'commerce': '0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de',
         'router': '0xd7d36d66d2f1b608a0f943f722d27e3744f66f25',
-        'policy': '0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6',
+        'policy': '0xd6a4217588f6b1f5657a92a3e94e6422ad771cea',
         'rpc': 'https://data-seed-prebsc-1-s1.bnbchain.org:8545',
     },
     'bsc-mainnet': {
@@ -22,7 +22,6 @@ BSC_NETWORKS = {
         'rpc': 'https://bsc-dataseed.bnbchain.org',
     },
 }
-
 
 @dataclass(frozen=True)
 class Settings:
@@ -38,10 +37,7 @@ class Settings:
     service_price_units: int = int(os.getenv('SERVICE_PRICE_UNITS', '1'))
     poll_interval_seconds: int = int(os.getenv('POLL_INTERVAL_SECONDS', '15'))
 
-
 settings = Settings()
 if settings.network not in BSC_NETWORKS:
     raise ValueError(f'Unsupported NETWORK={settings.network}; use bsc-testnet or bsc-mainnet')
-
-# Backwards-compatible testnet constant used by older imports.
 BSC_TESTNET = BSC_NETWORKS['bsc-testnet']

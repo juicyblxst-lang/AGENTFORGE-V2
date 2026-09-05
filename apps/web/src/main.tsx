@@ -8,7 +8,7 @@ type JobRecord={status:string;result?:any;chain?:{statusName:string;budget:numbe
 const API=(import.meta as any).env?.VITE_API_URL||'http://localhost:8000';
 const commerce='0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de' as `0x${string}`;
 const router='0xd7d36d66d2f1b608a0f943f722d27e3744f66f25' as `0x${string}`;
-const policy='0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6' as `0x${string}`;
+const policy='0xd6a4217588f6b1f5657a92a3e94e6422ad771cea' as `0x${string}`;
 const commerceAbi=[
  {type:'function',name:'createJob',stateMutability:'nonpayable',inputs:[{name:'provider',type:'address'},{name:'evaluator',type:'address'},{name:'expiredAt',type:'uint256'},{name:'description',type:'string'},{name:'hook',type:'address'}],outputs:[{type:'uint256'}]},
  {type:'function',name:'fund',stateMutability:'nonpayable',inputs:[{name:'jobId',type:'uint256'},{name:'expectedBudget',type:'uint256'},{name:'optParams',type:'bytes'}],outputs:[]},

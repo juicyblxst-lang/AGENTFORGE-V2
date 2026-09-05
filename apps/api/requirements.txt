@@ -2,5 +2,5 @@ fastapi==0.116.1
 uvicorn[standard]==0.35.0
 httpx==0.28.1
 python-dotenv==1.1.1
-bnbagent==0.20.0
+bnbagent @ git+https://github.com/bnb-chain/bnbagent-sdk.git@main#subdirectory=python
 psycopg[binary]==3.2.9

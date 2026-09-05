@@ -12,7 +12,7 @@ def provider_client():
     from bnbagent import EVMWalletProvider
     from bnbagent.erc8183 import ERC8183Client
     wallet=EVMWalletProvider(password='agentforge-runtime',private_key=settings.provider_private_key,persist=False)
-    return wallet, ERC8183Client(wallet_provider=wallet,network='bsc-testnet')
+    return wallet, ERC8183Client(wallet_provider=wallet,network=settings.network)
 
 async def quote(job_id:int,amount_units:int):
     if not provider_ready(): raise RuntimeError('Provider requires PROVIDER_PRIVATE_KEY, PROVIDER_ADDRESS and PROVIDER_AGENT_BASE_URL')
@@ -57,7 +57,7 @@ async def process_job(job_id:int):
         return
     upsert(job_id,status='executing')
     result=await execute_external(agent,job.description)
-    ops=ERC8183JobOps(wallet,network='bsc-testnet',storage_provider=LocalStorageProvider('.agent-data'),service_price=0,agent_url=settings.provider_agent_base_url)
+    ops=ERC8183JobOps(wallet,network=settings.network,storage_provider=LocalStorageProvider('.agent-data'),service_price=0,agent_url=settings.provider_agent_base_url)
     submitted=ops.submit_result(job_id,json.dumps(result,ensure_ascii=False),{'agentforge_agent':record['agent_id']})
     if not submitted.get('success',False):raise RuntimeError(submitted.get('error') or 'submit_result failed')
     submit_tx=submitted.get('txHash') or submitted.get('tx_hash')
@@ -74,7 +74,6 @@ async def reconcile_once():
             if str(state['provider']).lower()!=str(settings.provider_address).lower():continue
             if state['statusName']=='funded': await process_job(jid)
             elif state['statusName']=='submitted':
-                # Settlement is permissionless and must wait for the policy's dispute window.
                 if int(state['submittedAt']) + dispute_window() > int(time.time()): continue
                 result=client.settle(jid)
                 if result.get('success',False):

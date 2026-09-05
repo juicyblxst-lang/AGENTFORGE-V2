@@ -10,7 +10,7 @@ from .chain_dynamic import read_job, verify_receipt
 from .orchestrator import quote, worker
 
 network=BSC_NETWORKS[settings.network]
-app=FastAPI(title='AgentForge API',version='2.2.0')
+app=FastAPI(title='AgentForge API',version='2.3.0')
 app.add_middleware(CORSMiddleware,allow_origins=list(settings.cors_origins),allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
 worker_task=None
 
@@ -43,10 +43,10 @@ async def prepare(h:Hire):
     try:
         agent=await get_agent(int(h.agent_id))
         if agent['agentRegistry']!=h.agent_registry:raise ValueError('Agent registry mismatch')
+        if not agent.get('identityVerified'):raise ValueError('Agent identity is not verified on the configured ERC-8004 registry')
         if not agent.get('endpoints'):raise ValueError('Agent has no executable endpoint')
-        provider=agent.get('owner')
-        if not provider:raise ValueError('Agent has no resolvable provider/agent wallet')
-        return {'agent':agent,'provider':provider,'evaluator':network['router'],'hook':network['router'],'policy':network['policy'],'expiresInSeconds':7200}
+        if not settings.provider_address:raise ValueError('Provider is not configured: PROVIDER_ADDRESS is required')
+        return {'agent':agent,'provider':settings.provider_address,'evaluator':network['router'],'hook':network['router'],'policy':network['policy'],'expiresInSeconds':7200}
     except Exception as e:raise HTTPException(400,str(e))
 @app.post('/api/jobs/{job_id}/budget')
 async def budget(job_id:int):

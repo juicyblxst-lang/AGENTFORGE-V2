@@ -84,7 +84,9 @@ def normalize(raw,verify=True):
         seen.add(key)
         endpoints=_services(a); skills=a.get('skills') or a.get('tags') or []
         if isinstance(skills,str): skills=[skills]
-        blob=' '.join(str(a.get(k,'')) for k in ('name','description','skills','domains','tags','categories'))+' '+str(endpoints)
+        domains=a.get('domains') or []
+        if isinstance(domains,str): domains=[domains]
+        blob=' '.join(str(a.get(k,'')) for k in ('name','description','skills','domains','tags','categories','capabilities','supportedTrust'))+' '+str(endpoints)
         agent={'key':key,'agentId':aid,'agentRegistry':registry,'name':a.get('name') or f'Agent #{aid}','description':a.get('description') or 'ERC-8004 registered BNB Chain agent.','owner':a.get('agent_wallet') or a.get('agentWallet') or a.get('owner_address') or a.get('owner') or reg0.get('agentWallet'),'categories':category_for(blob),'skills':skills,'endpoints':endpoints,'reputation':a.get('total_score',a.get('reputation',a.get('scores'))),'active':a.get('active',a.get('is_active',True)),'raw':a}
         if verify:
             proof=_verify_identity(agent)
@@ -104,8 +106,8 @@ async def _discover_from_chain(limit=100):
     if not w3.is_connected(): raise RuntimeError('BSC RPC unavailable for ERC-8004 discovery')
     if w3.eth.chain_id!=network_config()['chainId']: raise RuntimeError(f'RPC chain mismatch: expected {network_config()["chainId"]}, got {w3.eth.chain_id}')
     address=Web3.to_checksum_address(network_config()['identityRegistry']); contract=w3.eth.contract(address=address,abi=IDENTITY_ABI); latest=w3.eth.block_number
-    start=88_179_226 if settings.network=='bsc-testnet' else 0
-    if start>latest: start=0
+    start=88_179_226 if settings.network=='bsc-testnet' else max(0,latest-1_000_000)
+    if start>latest: start=max(0,latest-1_000_000)
     chunk=100_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
     for frm in range(start,latest+1,chunk):
         to=min(frm+chunk-1,latest)
@@ -132,20 +134,25 @@ async def _discover_from_chain(limit=100):
 
 async def discover(limit=100):
     limit=min(max(limit,1),100)
-    if settings.network=='bsc-testnet': return await _discover_from_chain(limit)
-    offset=0; result=[]; page_size=min(100,limit)
-    while len(result)<limit:
-        page=await _get('/agents',{'chain_id':network_config()['chainId'],'limit':min(page_size,limit-len(result)),'offset':offset}); result.extend(normalize(page,verify=True))
-        raw_items=[]
-        if isinstance(page,dict):
-            data=page.get('data',page)
-            if isinstance(data,dict): raw_items=data.get('items',data.get('agents',[])) or []
-            elif isinstance(data,list): raw_items=data
-        if not raw_items or len(raw_items)<page_size: break
-        offset+=len(raw_items)
-    return list({a['key']:a for a in result}.values())[:limit]
+    params={'chain_id':network_config()['chainId'],'is_testnet':settings.network=='bsc-testnet','limit':limit,'offset':0}
+    try:
+        page=await _get('/agents',params)
+        result=normalize(page,verify=True)
+        if result: return list({a['key']:a for a in result}.values())[:limit]
+        if settings.network!='bsc-testnet': return []
+    except Exception as scan_error:
+        if settings.network!='bsc-testnet': raise
+    if settings.network=='bsc-testnet':
+        return await _discover_from_chain(limit)
+    return []
 
 async def get_agent(agent_id):
+    try:
+        data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':settings.network=='bsc-testnet'})
+        found=normalize({'data':[data]},verify=True)
+        if found: return found[0]
+    except Exception:
+        if settings.network!='bsc-testnet': raise
     if settings.network=='bsc-testnet':
         w3=Web3(Web3.HTTPProvider(settings.rpc_url,request_kwargs={'timeout':20}))
         if not w3.is_connected() or w3.eth.chain_id!=network_config()['chainId']: raise ValueError('BSC testnet RPC unavailable or wrong chain')
@@ -159,6 +166,4 @@ async def get_agent(agent_id):
         if not found: raise ValueError('Agent is not a verified ERC-8004 identity on the configured BSC network')
         found[0]['identityVerified']=True; found[0]['identityProof']={'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri}
         return found[0]
-    data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}'); found=normalize({'data':[data]},verify=True)
-    if not found: raise ValueError('Agent is not a verified ERC-8004 identity on the configured BSC network')
-    return found[0]
+    raise ValueError('Agent is not a verified ERC-8004 identity on the configured BSC network')

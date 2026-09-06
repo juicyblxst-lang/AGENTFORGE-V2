@@ -14,9 +14,9 @@ CATEGORIES = {
     'health-factor': ['health factor','healthfactor','liquidation','lending health','liquidation monitor','lending guardian','borrow health','collateral health','liquidation risk','venus'],
 }
 IDENTITY_ABI=[
-    {'type':'function','name':'ownerOf','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'type':'address'}]},
-    {'type':'function','name':'getAgentWallet','stateMutability':'view','inputs':[{'name':'agentId','type':'uint256'}],'outputs':[{'type':'address'}]},
-    {'type':'function','name':'tokenURI','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'type':'string'}]},
+    {'type':'function','name':'ownerOf','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'name':'owner','type':'address'}]},
+    {'type':'function','name':'getAgentWallet','stateMutability':'view','inputs':[{'name':'agentId','type':'uint256'}],'outputs':[{'name':'wallet','type':'address'}]},
+    {'type':'function','name':'tokenURI','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'name':'','type':'string'}]},
     {'type':'event','name':'Registered','anonymous':False,'inputs':[{'indexed':True,'name':'agentId','type':'uint256'},{'indexed':False,'name':'agentURI','type':'string'},{'indexed':True,'name':'owner','type':'address'}]},
 ]
 
@@ -72,12 +72,12 @@ async def _fetch_metadata(uri):
 
 def normalize(raw,verify=True):
     data=raw.get('data',raw) if isinstance(raw,dict) else raw
-    if isinstance(data,dict): data=data.get('items',data.get('agents',[]))
+    if isinstance(data,dict): data=data.get('items',data.get('agents',data.get('results',[])))
     out=[]; seen=set()
     for a in data or []:
         if not isinstance(a,dict): continue
         regs=a.get('registrations') or []; reg0=regs[0] if regs and isinstance(regs[0],dict) else {}
-        registry=_explicit_registry(a,reg0); aid=str(a.get('token_id',a.get('agent_id',a.get('agentId',a.get('id','')))))
+        registry=_explicit_registry(a,reg0); aid=str(a.get('token_id',a.get('tokenId',a.get('agent_id',a.get('agentId',a.get('id',''))))))
         if not registry or not aid: continue
         key=f'{registry}:{aid}'
         if key in seen: continue
@@ -101,6 +101,33 @@ async def _get(path,params=None):
     async with httpx.AsyncClient(timeout=20,follow_redirects=True) as client:
         r=await client.get(f'{SCAN}{path}',params=params,headers=headers); r.raise_for_status(); return r.json()
 
+def _candidate_ids(page):
+    root=page.get('data',page) if isinstance(page,dict) else page
+    if isinstance(root,dict): root=root.get('items',root.get('agents',root.get('results',root.get('data',[]))))
+    ids=[]
+    for item in root or []:
+        if not isinstance(item,dict): continue
+        aid=item.get('token_id',item.get('tokenId',item.get('agent_id',item.get('agentId',item.get('id')))))
+        if aid is not None:
+            try: ids.append(int(aid))
+            except (TypeError,ValueError): pass
+    return list(dict.fromkeys(ids))
+
+async def _discover_from_scan(limit):
+    params={'chain_id':network_config()['chainId'],'is_testnet':False,'limit':limit,'offset':0}
+    page=await _get('/agents',params)
+    candidates=_candidate_ids(page)
+    result=[]
+    for aid in candidates[:limit]:
+        try:
+            agent=await get_agent(aid)
+            if agent: result.append(agent)
+        except Exception:
+            continue
+    if result: return list({a['key']:a for a in result}.values())[:limit]
+    normalized=normalize(page,verify=True)
+    return list({a['key']:a for a in normalized}.values())[:limit]
+
 async def _discover_from_chain(limit=100):
     w3=Web3(Web3.HTTPProvider(settings.rpc_url,request_kwargs={'timeout':20}))
     if not w3.is_connected(): raise RuntimeError('BSC RPC unavailable for ERC-8004 discovery')
@@ -108,15 +135,15 @@ async def _discover_from_chain(limit=100):
     address=Web3.to_checksum_address(network_config()['identityRegistry']); contract=w3.eth.contract(address=address,abi=IDENTITY_ABI); latest=w3.eth.block_number
     start=88_179_226 if settings.network=='bsc-testnet' else max(0,latest-1_000_000)
     if start>latest: start=max(0,latest-1_000_000)
-    chunk=5_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
+    chunk=100_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
     for frm in range(start,latest+1,chunk):
         to=min(frm+chunk-1,latest)
-        try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':frm,'toBlock':to}))
+        try:
+            events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':frm,'toBlock':to}))
         except Exception:
-            for s in range(frm,to+1,1_000):
-                try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+999,to)}))
-                except Exception:
-                    continue
+            for s in range(frm,to+1,10_000):
+                try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+9_999,to)}))
+                except Exception: continue
     latest_by_id={}
     for ev in events:
         try:
@@ -137,43 +164,17 @@ async def _discover_from_chain(limit=100):
 
 async def discover(limit=100):
     limit=min(max(limit,1),100)
-    # First try the scan API
-    params={'chain_id':network_config()['chainId'],'is_testnet':settings.network=='bsc-testnet','limit':limit,'offset':0}
-    try:
-        page=await _get('/agents',params)
-        result=normalize(page,verify=True)
-        if result: return list({a['key']:a for a in result}.values())[:limit]
-    except Exception:
-        pass  # fallback to chain scan or hardcoded
-    
-    # Fallback: fetch the four known agents directly
-    known_ids = [2183, 2184, 2185, 2186]
-    agents_list = []
-    for aid in known_ids:
-        try:
-            agent = await get_agent(aid)
-            if agent:
-                agents_list.append(agent)
-        except Exception:
-            pass
-    if agents_list:
-        return agents_list[:limit]
-    
-    # Last resort: chain scan
     if settings.network=='bsc-testnet':
         return await _discover_from_chain(limit)
-    return []
+    return await _discover_from_scan(limit)
 
 async def get_agent(agent_id):
-    # Try scan API first
     try:
-        data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':settings.network=='bsc-testnet'})
+        data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':False})
         found=normalize({'data':[data]},verify=True)
         if found: return found[0]
     except Exception:
         pass
-    
-    # Fallback to direct registry query
     if settings.network=='bsc-testnet':
         w3=Web3(Web3.HTTPProvider(settings.rpc_url,request_kwargs={'timeout':20}))
         if not w3.is_connected() or w3.eth.chain_id!=network_config()['chainId']: raise ValueError('BSC testnet RPC unavailable or wrong chain')

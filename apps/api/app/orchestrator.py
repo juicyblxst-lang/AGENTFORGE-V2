@@ -2,6 +2,8 @@ import asyncio
 import json
 import time
 import httpx
+from web3 import Web3
+from eth_account import Account
 from .config import settings, BSC_NETWORKS
 from .db import upsert, get, claim_execution
 from .discovery import get_agent
@@ -20,26 +22,67 @@ def provider_client():
 
 async def quote(job_id: int, amount_units: int):
     if not provider_ready():
-        raise RuntimeError('Provider not ready')
+        raise RuntimeError('Provider requires PROVIDER_PRIVATE_KEY, PROVIDER_ADDRESS and PROVIDER_AGENT_BASE_URL')
+
+    # Use a fresh raw Web3 transaction for setBudget. The SDK's local executor
+    # can race its own nonce cache on a long-lived provider wallet; using the
+    # pending nonce from the chain makes this boundary deterministic.
     wallet, client = provider_client()
-    job = client.get_job(job_id)   # dataclass
-    # Must be open (status == 0)
-    if job.status != 0:
-        raise RuntimeError(f"Job not open (status={job.status})")
-    # Provider can set budget; no identity check needed for setBudget
+    job = client.get_job(job_id)
+    if str(job.provider).lower() != str(settings.provider_address).lower():
+        raise RuntimeError(f'Provider mismatch: job provider={job.provider}, configured={settings.provider_address}')
+    if int(job.status) != 0:
+        raise RuntimeError(f'Job not open (status={int(job.status)})')
+
     amount = amount_units * (10 ** client.token_decimals())
-    result = client.set_budget(job_id, amount)
-    if not result.get('success', False):
-        raise RuntimeError(result.get('error') or 'setBudget failed')
-    tx = result.get('txHash') or result.get('tx_hash')
-    if not tx:
-        raise RuntimeError('setBudget returned no tx hash')
-    return tx
+    w3 = client.w3
+    account = Account.from_key(settings.provider_private_key)
+    configured = Web3.to_checksum_address(settings.provider_address)
+    if account.address.lower() != configured.lower():
+        raise RuntimeError(f'Provider private key does not match PROVIDER_ADDRESS: key={account.address}, configured={configured}')
+
+    commerce = w3.eth.contract(address=Web3.to_checksum_address(network['commerce']), abi=[
+        {
+            'type': 'function', 'name': 'setBudget', 'stateMutability': 'nonpayable',
+            'inputs': [
+                {'name': 'jobId', 'type': 'uint256'},
+                {'name': 'amount', 'type': 'uint256'},
+                {'name': 'optParams', 'type': 'bytes'},
+            ], 'outputs': []
+        },
+    ])
+    try:
+        nonce = w3.eth.get_transaction_count(account.address, 'pending')
+        gas_price = w3.eth.gas_price
+        tx = commerce.functions.setBudget(job_id, amount, b'').build_transaction({
+            'from': account.address,
+            'nonce': nonce,
+            'chainId': network['chainId'],
+            'gas': 300_000,
+            'gasPrice': gas_price,
+        })
+        try:
+            tx['gas'] = w3.eth.estimate_gas(tx)
+        except Exception as exc:
+            raise RuntimeError(f'setBudget gas estimation failed: {exc}') from exc
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    except Exception as exc:
+        raise RuntimeError(f'setBudget transaction submission failed: {exc}') from exc
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    tx_hex = tx_hash.hex()
+    if int(receipt.status) != 1:
+        raise RuntimeError(f'setBudget transaction reverted: {tx_hex}')
+    state = read_job(job_id)
+    if state['statusName'] != 'open' or int(state['budget']) != amount:
+        raise RuntimeError(f'setBudget receipt succeeded but on-chain state is invalid: status={state["statusName"]}, budget={state["budget"]}, expected={amount}')
+    return tx_hex
 
 async def execute_external(agent, task):
     endpoints = agent.get('endpoints', [])
     if not endpoints:
-        raise RuntimeError('No executable endpoint')
+        raise RuntimeError('Selected ERC-8004 agent has no executable endpoint')
     last = None
     async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0), follow_redirects=True) as http:
         for ep in endpoints:
@@ -52,17 +95,7 @@ async def execute_external(agent, task):
                         url = card['url']
                     elif not url.rstrip('/').endswith('/message/send'):
                         url = url.rstrip('/') + '/message/send'
-                    payload = {
-                        'jsonrpc': '2.0',
-                        'id': str(time.time_ns()),
-                        'method': 'message/send',
-                        'params': {
-                            'message': {
-                                'role': 'user',
-                                'parts': [{'kind': 'text', 'text': task}]
-                            }
-                        }
-                    }
+                    payload = {'jsonrpc': '2.0', 'id': str(time.time_ns()), 'method': 'message/send', 'params': {'message': {'role': 'user', 'parts': [{'kind': 'text', 'text': task}]}}}
                 else:
                     payload = {'task': task}
                 r = await http.post(url, json=payload, headers={'content-type': 'application/json', 'accept': 'application/json'})
@@ -72,7 +105,7 @@ async def execute_external(agent, task):
                 except ValueError:
                     result = {'text': r.text}
                 if result is None or result == '' or result == {}:
-                    raise RuntimeError('Agent returned empty response')
+                    raise RuntimeError('Agent returned an empty response')
                 return result
             except Exception as e:
                 last = e
@@ -84,8 +117,8 @@ async def process_job(job_id: int):
     from bnbagent.erc8183 import ERC8183JobOps
     from bnbagent.storage import LocalStorageProvider
     wallet, client = provider_client()
-    job = client.get_job(job_id)   # dataclass
-    if str(job.provider).lower() != str(settings.provider_address).lower() or job.status != 1:
+    job = client.get_job(job_id)
+    if str(job.provider).lower() != str(settings.provider_address).lower() or int(job.status) != 1:
         return
     record = get(job_id)
     if not record:
@@ -95,10 +128,10 @@ async def process_job(job_id: int):
     try:
         agent = await get_agent(int(record['agent_id']))
         if not agent.get('identityVerified'):
-            raise RuntimeError('Agent not verified at execution time')
+            raise RuntimeError('Selected ERC-8004 agent could not be re-verified at execution time')
         if not agent.get('endpoints'):
-            raise RuntimeError('No executable endpoint at execution time')
-        result = await execute_external(agent, job.description or f'Execute job {job_id}')
+            raise RuntimeError('Selected ERC-8004 agent has no executable endpoint at execution time')
+        result = await execute_external(agent, job.description or f'Execute AgentForge job {job_id}')
         deliverable = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
         if not deliverable or deliverable == '{}':
             raise RuntimeError('Execution produced no valid deliverable')
@@ -108,10 +141,10 @@ async def process_job(job_id: int):
             raise RuntimeError(submitted.get('error') or 'submit_result failed')
         submit_tx = submitted.get('txHash') or submitted.get('tx_hash')
         if not submit_tx:
-            raise RuntimeError('submit_result returned no tx hash')
+            raise RuntimeError('submit_result returned no transaction hash')
         state = read_job(job_id)
         if state['statusName'] != 'submitted':
-            raise RuntimeError(f'Submit verification failed: {state}')
+            raise RuntimeError(f'On-chain submit verification failed: {state}')
         upsert(job_id, status='submitted', submit_tx=submit_tx, result_json=deliverable)
     except Exception as e:
         upsert(job_id, status='error', error=str(e))
@@ -128,17 +161,20 @@ async def reconcile_once():
                 continue
             if state['statusName'] == 'funded':
                 await process_job(jid)
-            elif state['statusName'] == 'submitted' and int(state['submitted_at']) + dispute_window() <= int(time.time()):
+            elif state['statusName'] == 'submitted' and int(state['submittedAt']) + dispute_window() <= int(time.time()):
                 result = client.settle(jid)
                 if not result.get('success', False):
                     raise RuntimeError(result.get('error') or 'settle failed')
                 settle_tx = result.get('txHash') or result.get('tx_hash')
                 if not settle_tx:
-                    raise RuntimeError('settle returned no tx hash')
+                    raise RuntimeError('settle returned no transaction hash')
+                receipt = client.w3.eth.wait_for_transaction_receipt(settle_tx, timeout=120)
+                if int(receipt.status) != 1:
+                    raise RuntimeError(f'settle transaction reverted: {settle_tx}')
                 if read_job(jid)['statusName'] == 'completed':
                     upsert(jid, status='completed', settle_tx=settle_tx)
                 else:
-                    raise RuntimeError('Settlement succeeded but job not Completed')
+                    raise RuntimeError('Settlement receipt succeeded but on-chain job is not Completed')
         except Exception as e:
             existing = get(jid)
             if existing and existing.get('status') not in ('submitted', 'completed'):

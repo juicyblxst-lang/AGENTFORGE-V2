@@ -23,43 +23,24 @@ async def quote(job_id: int, amount_units: int):
     if not provider_ready():
         raise RuntimeError('Provider requires PROVIDER_PRIVATE_KEY, PROVIDER_ADDRESS and PROVIDER_AGENT_BASE_URL')
 
-    # Get fresh wallet and client
     wallet, client = provider_client()
-
-    # Force nonce sync: get current nonce from node
-    w3 = Web3(Web3.HTTPProvider(settings.rpc_url))
-    if not w3.is_connected():
-        raise RuntimeError('RPC not connected')
-    account = w3.eth.account.from_key(settings.provider_private_key)
-    latest_nonce = w3.eth.get_transaction_count(account.address, 'pending')
-
-    # The SDK's wallet provider may cache nonce; we can update it manually
-    # We'll use the SDK's set_budget but pass a custom nonce via the underlying send_transaction?
-    # The SDK may not expose nonce override. Instead, we can use the wallet's send_transaction directly.
-    # But we'll use the SDK and then if it fails with nonce error, we can retry with increased nonce.
-    # Simpler: we'll build the transaction using the SDK's internal ABI but set nonce ourselves.
-    # However, the SDK does not expose a way to pass nonce easily. 
-    # So we revert to building transaction manually but with a full ABI.
-
-    # To avoid ABI issues, we'll use the SDK's client but we need to ensure nonce is fresh.
-    # The SDK's wallet provider likely uses a nonce manager. We can reset it by creating a new wallet.
-    # But we already create a new wallet each time, so it should be fresh.
-    # The earlier nonce error might have been due to a pending transaction. 
-    # Let's try using the SDK's set_budget again, but we'll catch nonce error and retry with +1.
-    try:
-        amount = amount_units * (10 ** client.token_decimals())
-        result = client.set_budget(job_id, amount)
-        if not result.get('success', False):
-            raise RuntimeError(result.get('error') or 'setBudget failed')
-        tx = result.get('txHash') or result.get('tx_hash')
-        if not tx:
-            raise RuntimeError('setBudget returned no transaction hash')
-        return tx
-    except Exception as e:
-        # If it's a nonce error, we can try to manually send with updated nonce.
-        # We'll implement a fallback using web3 with full ABI.
-        # But for simplicity, we'll raise the error with a hint.
-        raise RuntimeError(f'setBudget failed: {e}')
+    
+    # Verify job is open and provider matches
+    job = client.get_job(job_id)
+    if str(job.provider).lower() != str(settings.provider_address).lower():
+        raise RuntimeError(f"Provider mismatch: job provider={job.provider}, configured={settings.provider_address}")
+    if job.status != 0:
+        raise RuntimeError(f"Job not open (status={job.status})")
+    
+    amount = amount_units * (10 ** client.token_decimals())
+    result = client.set_budget(job_id, amount)
+    if not result.get('success', False):
+        error = result.get('error') or 'setBudget failed'
+        raise RuntimeError(f'setBudget failed: {error}')
+    tx = result.get('txHash') or result.get('tx_hash')
+    if not tx:
+        raise RuntimeError('setBudget returned no transaction hash')
+    return tx
 
 async def execute_external(agent, task):
     endpoints = agent.get('endpoints', [])

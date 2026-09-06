@@ -136,8 +136,22 @@ async def reconcile_once():
     client_sdk = ERC8183Client(wallet_provider=wallet, network=settings.network)
     for row in list_all(limit=200):
         jid = int(row['job_id'])
-        if row.get('status') in ('completed', 'error'):
+        db_status = row.get('status')
+        # Completed is terminal. Errors are deliberately retryable because a failed
+        # provider call/RPC must never strand an on-chain FUNDED job in escrow.
+        # Apply a short backoff so a permanently broken endpoint does not get
+        # hammered every poll cycle.
+        if db_status == 'completed':
             continue
+        if db_status == 'error':
+            updated_at = row.get('updated_at')
+            if updated_at:
+                try:
+                    age = time.time() - __import__('datetime').datetime.fromisoformat(updated_at.replace('Z', '+00:00')).timestamp()
+                    if age < 60:
+                        continue
+                except Exception:
+                    pass
         try:
             state = read_job(jid)
             if str(state['provider']).lower() != str(settings.provider_address).lower():

@@ -35,7 +35,7 @@ function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), 30000);
 
     fetch(`${API}/api/config`, { signal: controller.signal })
       .then(async r => { if (!r.ok) throw Error(await r.text()); return r.json() })

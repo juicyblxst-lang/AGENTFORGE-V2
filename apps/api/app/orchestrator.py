@@ -23,7 +23,7 @@ async def quote(job_id: int, amount_units: int):
         raise RuntimeError('Provider not ready')
     wallet, client = provider_client()
     job = client.get_job(job_id)
-    if job.status != 0:
+    if job.status not in (0, 1):
         raise RuntimeError(f"Job not open (status={job.status})")
     amount = amount_units * (10 ** client.token_decimals())
     result = client.set_budget(job_id, amount)

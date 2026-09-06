@@ -8,9 +8,10 @@ from .config import settings, BSC_NETWORKS
 
 SCAN = 'https://api.8004scan.io/api/v1'
 CATEGORIES = {
-    'rebalancing': ['rebalance','rebalancing','portfolio rebalance','position reset','range rebalancer','liquidity range','range management','cl range','concentrated liquidity','lp range','liquidity position'],
+    'rebalancing': ['rebalance','rebalancing','portfolio rebalance','position reset','range rebalancer','liquidity range','range management','cl range','concentrated liquidity','lp range'],
     'grid-trading': ['grid trading','grid-trading','grid bot','grid orders','grid strategy','grid trader','dca','dollar cost averaging'],
     'yield-optimisation': ['yield optimization','yield optimisation','yield optimizer','yield','apr','apy','liquidity routing','yield farming','liquidity mining','lending optimizer','lending optimisation','yield strategy','vault'],
+    'yield-optimization': ['yield optimization','yield optimisation','yield optimizer','yield','apr','apy','liquidity routing','yield farming','liquidity mining','lending optimizer','lending optimisation','yield strategy','vault'],
     'health-factor': ['health factor','healthfactor','liquidation','lending health','liquidation monitor','lending guardian','borrow health','collateral health','liquidation risk','venus'],
 }
 IDENTITY_ABI=[
@@ -70,7 +71,7 @@ async def _fetch_metadata(uri):
             r=await client.get(target,headers={'Accept':'application/json,text/plain,*/*'}); r.raise_for_status(); return r.json()
     except Exception: return None
 
-def normalize(raw, verify=True):
+def normalize(raw, verify=False):
     data=raw.get('data',raw) if isinstance(raw,dict) else raw
     if isinstance(data,dict): data=data.get('items',data.get('agents',[]))
     out=[]; seen=set()
@@ -78,8 +79,9 @@ def normalize(raw, verify=True):
     for a in data or []:
         if not isinstance(a,dict): continue
         regs=a.get('registrations') or []; reg0=regs[0] if regs and isinstance(regs[0],dict) else {}
-        registry=_explicit_registry(a,reg0); aid=str(a.get('token_id',a.get('agent_id',a.get('agentId',a.get('id','')))))
-        if not registry or not aid: continue
+        registry=_explicit_registry(a,reg0) or f'eip155:{network_config()["chainId"]}:{network_config()["identityRegistry"]}'
+        aid=str(a.get('token_id',a.get('agent_id',a.get('agentId',a.get('id','')))))
+        if not aid: continue
         key=f'{registry}:{aid}'
         if key in seen: continue
         seen.add(key)
@@ -114,18 +116,14 @@ async def _discover_from_chain(limit=100):
     if not w3.is_connected(): raise RuntimeError('BSC RPC unavailable for ERC-8004 discovery')
     if w3.eth.chain_id!=network_config()['chainId']: raise RuntimeError(f'RPC chain mismatch: expected {network_config()["chainId"]}, got {w3.eth.chain_id}')
     address=Web3.to_checksum_address(network_config()['identityRegistry']); contract=w3.eth.contract(address=address,abi=IDENTITY_ABI); latest=w3.eth.block_number
-    start = max(0, latest - 3_000_000)
-    if start > latest:
-        start = max(0, latest - 1_000_000)
-    chunk=5_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
+    start=max(0,latest-3_000_000); chunk=5_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
     for frm in range(start,latest+1,chunk):
         to=min(frm+chunk-1,latest)
         try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':frm,'toBlock':to}))
         except Exception:
             for s in range(frm,to+1,1_000):
                 try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+999,to)}))
-                except Exception:
-                    continue
+                except Exception: continue
     latest_by_id={}
     for ev in events:
         try:
@@ -146,8 +144,7 @@ async def _discover_from_chain(limit=100):
 
 async def discover(limit=100):
     limit=min(max(limit,1),100)
-    if settings.network == 'bsc-testnet':
-        return await _discover_from_chain(limit)
+    if settings.network == 'bsc-testnet': return await _discover_from_chain(limit)
     params={'chain_id':network_config()['chainId'],'is_testnet':False,'limit':limit,'offset':0}
     try:
         page=await _get('/agents',params)
@@ -171,22 +168,20 @@ async def get_agent(agent_id):
         if not found: raise ValueError('Agent is not a verified ERC-8004 identity on the configured BSC network')
         found[0]['identityVerified']=True; found[0]['identityProof']={'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri}
         return found[0]
-    else:
-        try:
-            data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':False})
-            found=normalize({'data':[data]},verify=True)
-            if found: return found[0]
-        except Exception:
-            pass
-        w3=Web3(Web3.HTTPProvider(settings.rpc_url,request_kwargs={'timeout':20}))
-        if not w3.is_connected() or w3.eth.chain_id!=network_config()['chainId']: raise ValueError('RPC unavailable or wrong chain')
-        c=w3.eth.contract(address=Web3.to_checksum_address(network_config()['identityRegistry']),abi=IDENTITY_ABI)
-        try: uri=c.functions.tokenURI(int(agent_id)).call(); owner=c.functions.ownerOf(int(agent_id)).call(); wallet=c.functions.getAgentWallet(int(agent_id)).call()
-        except Exception as e: raise ValueError(f'Agent {agent_id} is not registered: {e}')
-        metadata=await _fetch_metadata(uri)
-        if not isinstance(metadata,dict): metadata={}
-        metadata.update({'agentId':int(agent_id),'agentRegistry':f'eip155:{network_config()["chainId"]}:{network_config()["identityRegistry"]}','owner':owner,'agentWallet':wallet})
-        found=normalize({'data':[metadata]},verify=False)
-        if not found: raise ValueError('Agent not verified')
-        found[0]['identityVerified']=True; found[0]['identityProof']={'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri}
-        return found[0]
+    try:
+        data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':False})
+        found=normalize({'data':[data]},verify=True)
+        if found: return found[0]
+    except Exception: pass
+    w3=Web3(Web3.HTTPProvider(settings.rpc_url,request_kwargs={'timeout':20}))
+    if not w3.is_connected() or w3.eth.chain_id!=network_config()['chainId']: raise ValueError('RPC unavailable or wrong chain')
+    c=w3.eth.contract(address=Web3.to_checksum_address(network_config()['identityRegistry']),abi=IDENTITY_ABI)
+    try: uri=c.functions.tokenURI(int(agent_id)).call(); owner=c.functions.ownerOf(int(agent_id)).call(); wallet=c.functions.getAgentWallet(int(agent_id)).call()
+    except Exception as e: raise ValueError(f'Agent {agent_id} is not registered: {e}')
+    metadata=await _fetch_metadata(uri)
+    if not isinstance(metadata,dict): metadata={}
+    metadata.update({'agentId':int(agent_id),'agentRegistry':f'eip155:{network_config()["chainId"]}:{network_config()["identityRegistry"]}','owner':owner,'agentWallet':wallet})
+    found=normalize({'data':[metadata]},verify=False)
+    if not found: raise ValueError('Agent not verified')
+    found[0]['identityVerified']=True; found[0]['identityProof']={'verified':True,'owner':owner,'agentWallet':wallet,'tokenURI':uri}
+    return found[0]

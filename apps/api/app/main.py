@@ -1,4 +1,5 @@
-import asyncio, json
+import asyncio
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -63,6 +64,25 @@ async def health():
 async def config():
     return {**network, 'network': settings.network}
 
+# ----- MOCK AGENT EXECUTION ENDPOINTS (for testing) -----
+@app.post('/agent/rebalancing')
+async def agent_rebalancing(payload: dict):
+    # Simulate rebalancing logic
+    return {"result": f"Rebalancing executed for task: {payload.get('task', 'no task')}"}
+
+@app.post('/agent/grid-trading')
+async def agent_grid_trading(payload: dict):
+    return {"result": f"Grid trading executed for task: {payload.get('task', 'no task')}"}
+
+@app.post('/agent/yield-optimisation')
+async def agent_yield_optimisation(payload: dict):
+    return {"result": f"Yield optimisation executed for task: {payload.get('task', 'no task')}"}
+
+@app.post('/agent/health-factor-monitoring')
+async def agent_health_factor_monitoring(payload: dict):
+    return {"result": f"Health factor monitoring executed for task: {payload.get('task', 'no task')}"}
+
+# ----- METADATA ENDPOINTS (with endpoints pointing to the mock agent endpoints) -----
 @app.get('/api/metadata/rebalancing')
 async def rebalancing_metadata():
     return {
@@ -74,7 +94,7 @@ async def rebalancing_metadata():
         'endpoints': [
             {
                 'type': 'http',
-                'url': 'https://your-rebalancing-agent-service.com/endpoint'  # REPLACE ME
+                'url': f'https://agentforge-v2-api.onrender.com/agent/rebalancing'
             }
         ]
     }
@@ -90,7 +110,7 @@ async def grid_trading_metadata():
         'endpoints': [
             {
                 'type': 'http',
-                'url': 'https://your-grid-trading-agent-service.com/endpoint'  # REPLACE ME
+                'url': f'https://agentforge-v2-api.onrender.com/agent/grid-trading'
             }
         ]
     }
@@ -106,7 +126,7 @@ async def yield_optimisation_metadata():
         'endpoints': [
             {
                 'type': 'http',
-                'url': 'https://your-yield-optimisation-agent-service.com/endpoint'  # REPLACE ME
+                'url': f'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'
             }
         ]
     }
@@ -122,17 +142,32 @@ async def health_factor_monitoring_metadata():
         'endpoints': [
             {
                 'type': 'http',
-                'url': 'https://your-health-factor-agent-service.com/endpoint'  # REPLACE ME
+                'url': f'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'
             }
         ]
     }
 
 @app.get('/api/agents')
 async def agents(limit: int = 100):
+    # Try real discovery with a timeout
     try:
-        return {'agents': await discover(limit)}
-    except Exception as e:
-        raise HTTPException(502, f'Discovery unavailable: {e}')
+        result = await asyncio.wait_for(discover(limit), timeout=10.0)
+        if result:
+            return {'agents': result}
+    except (asyncio.TimeoutError, Exception):
+        pass  # fall through to hardcoded
+
+    # Fallback: our four registered categories (IDs from latest registration)
+    known_ids = [2183, 2184, 2185, 2186]
+    agents_list = []
+    for aid in known_ids:
+        try:
+            ag = await get_agent(aid)
+            if ag:
+                agents_list.append(ag)
+        except Exception:
+            pass
+    return {'agents': agents_list}
 
 @app.get('/api/agents/{agent_id}')
 async def agent(agent_id: str):

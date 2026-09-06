@@ -10,14 +10,14 @@ BSC_NETWORKS = {
         'identityRegistry': '0x8004A818BFB912233c491871b3d84c89A494BD9e',
         'commerce': '0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de',
         'router': '0xd7d36d66d2f1b608a0f943f722d27e3744f66f25',
-        'policy': '0xd6a4217588f6b1f5657a92a3e94e6422ad771cea',
+        'policy': '0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6',
         'rpc': 'https://data-seed-prebsc-1-s1.bnbchain.org:8545',
     },
     'bsc-mainnet': {
         'chainId': 56,
         'identityRegistry': '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
         'commerce': '0xea4daa3100a767e86fded867729ae7446476eba6',
-        'router': '0x51895229e12f9876011789b04f8698af06ccd6da',   # ✅ fixed (removed extra 6)
+        'router': '0x51895229e12f9876011789b04f8698af06ccd6da',
         'policy': '0x9c01845705b3078aa2e8cff7520a6376fd766de5',
         'rpc': 'https://bsc-dataseed.bnbchain.org',
     },

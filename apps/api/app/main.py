@@ -18,9 +18,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 network = BSC_NETWORKS[settings.network]
-app = FastAPI(title='AgentForge API', version='2.3.0')
 
-# ---- CORS FIX ----
+app = FastAPI(title='AgentForge API', version='2.4.0')
+
 allowed_origins = list(settings.cors_origins)
 vercel_url = "https://agentforge-v2-mu.vercel.app"
 if vercel_url not in allowed_origins:
@@ -33,7 +33,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# -----------------
 
 worker_task = None
 
@@ -56,7 +55,6 @@ class TxRecord(BaseModel):
     submit_tx: str | None = None
     settle_tx: str | None = None
 
-# --- Keep Render awake ---
 def _keep_alive():
     while True:
         time.sleep(240)
@@ -66,7 +64,6 @@ def _keep_alive():
             pass
 
 threading.Thread(target=_keep_alive, daemon=True).start()
-# -------------------------
 
 @app.on_event('startup')
 async def startup():
@@ -79,7 +76,7 @@ async def shutdown():
     if worker_task:
         worker_task.cancel()
 
-@app.api_route('/health', methods=["GET","HEAD"])
+@app.api_route('/health', methods=["GET", "HEAD"])
 async def health():
     return {
         'ok': True,
@@ -98,7 +95,6 @@ async def health():
 async def config():
     return {**network, 'network': settings.network}
 
-# ----- TRACK METADATA -----
 TRACK_META = {
     'rebalancing': {'name': 'Rebalancing', 'description': 'Automated portfolio rebalancing agents'},
     'grid-trading': {'name': 'Grid Trading', 'description': 'Grid strategy and DCA agents'},
@@ -113,7 +109,6 @@ async def track_metadata(track: str):
         raise HTTPException(404, f'Unknown track: {track}')
     return TRACK_META[track]
 
-# ----- MOCK AGENT EXECUTION ENDPOINTS -----
 @app.post('/agent/rebalancing')
 async def agent_rebalancing(payload: dict):
     return {"result": f"Rebalancing executed for task: {payload.get('task', 'no task')}"}
@@ -130,114 +125,82 @@ async def agent_yield_optimisation(payload: dict):
 async def agent_health_factor_monitoring(payload: dict):
     return {"result": f"Health factor monitoring executed for task: {payload.get('task', 'no task')}"}
 
-# ----- METADATA ENDPOINTS (specific) -----
-@app.get('/api/metadata/rebalancing')
-async def rebalancing_metadata():
-    return {
-        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
-        'name': 'AgentForge Rebalancing Agent',
-        'description': 'ERC-8004 agent metadata for the AgentForge Rebalancing category.',
-        'category': 'Rebalancing',
-        'active': True,
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/rebalancing'}]
-    }
+_REGISTRY = f'eip155:97:{network["identityRegistry"]}'
+_PROVIDER = settings.provider_address or '0x0000000000000000000000000000000000000000'
 
-@app.get('/api/metadata/grid-trading')
-async def grid_trading_metadata():
-    return {
-        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
-        'name': 'AgentForge Grid Trading Agent',
-        'description': 'ERC-8004 agent metadata for the AgentForge Grid Trading category.',
-        'category': 'Grid Trading',
-        'active': True,
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/grid-trading'}]
-    }
-
-@app.get('/api/metadata/yield-optimisation')
-async def yield_optimisation_metadata():
-    return {
-        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
-        'name': 'AgentForge Yield Optimisation Agent',
-        'description': 'ERC-8004 agent metadata for the AgentForge Yield Optimisation category.',
-        'category': 'Yield Optimisation',
-        'active': True,
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'}]
-    }
-
-@app.get('/api/metadata/health-factor-monitoring')
-async def health_factor_monitoring_metadata():
-    return {
-        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
-        'name': 'AgentForge Health Factor Monitoring Agent',
-        'description': 'ERC-8004 agent metadata for the AgentForge Health Factor Monitoring category.',
-        'category': 'Health Factor Monitoring',
-        'active': True,
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'}]
-    }
-
-# ----- HARDCODED AGENTS (fallback) -----
 HARDCODED_AGENTS = [
     {
-        'key': f'eip155:97:{network["identityRegistry"]}:2188',
+        'key': f'{_REGISTRY}:2188',
         'agentId': '2188',
-        'agentRegistry': f'eip155:97:{network["identityRegistry"]}',
+        'agentRegistry': _REGISTRY,
         'name': 'AgentForge Rebalancing Agent',
         'description': 'ERC-8004 agent for portfolio rebalancing on BNB Chain.',
-        'owner': settings.provider_address or '0x0000000000000000000000000000000000000000',
-        'agentWallet': settings.provider_address or '0x0000000000000000000000000000000000000000',
+        'owner': _PROVIDER,
+        'agentWallet': _PROVIDER,
         'identityVerified': True,
         'categories': ['rebalancing'],
         'skills': ['rebalance', 'liquidity', 'range'],
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/rebalancing'}],
+        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/rebalancing'}],
         'reputation': None,
         'active': True
     },
     {
-        'key': f'eip155:97:{network["identityRegistry"]}:2189',
+        'key': f'{_REGISTRY}:2189',
         'agentId': '2189',
-        'agentRegistry': f'eip155:97:{network["identityRegistry"]}',
+        'agentRegistry': _REGISTRY,
         'name': 'AgentForge Grid Trading Agent',
         'description': 'ERC-8004 agent for grid trading strategies on BNB Chain.',
-        'owner': settings.provider_address or '0x0000000000000000000000000000000000000000',
-        'agentWallet': settings.provider_address or '0x0000000000000000000000000000000000000000',
+        'owner': _PROVIDER,
+        'agentWallet': _PROVIDER,
         'identityVerified': True,
         'categories': ['grid-trading'],
         'skills': ['grid', 'dca', 'bot'],
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/grid-trading'}],
+        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/grid-trading'}],
         'reputation': None,
         'active': True
     },
     {
-        'key': f'eip155:97:{network["identityRegistry"]}:2190',
+        'key': f'{_REGISTRY}:2190',
         'agentId': '2190',
-        'agentRegistry': f'eip155:97:{network["identityRegistry"]}',
+        'agentRegistry': _REGISTRY,
         'name': 'AgentForge Yield Optimisation Agent',
         'description': 'ERC-8004 agent for yield optimisation on BNB Chain.',
-        'owner': settings.provider_address or '0x0000000000000000000000000000000000000000',
-        'agentWallet': settings.provider_address or '0x0000000000000000000000000000000000000000',
+        'owner': _PROVIDER,
+        'agentWallet': _PROVIDER,
         'identityVerified': True,
         'categories': ['yield-optimisation'],
         'skills': ['yield', 'apr', 'liquidity'],
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'}],
+        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'}],
         'reputation': None,
         'active': True
     },
     {
-        'key': f'eip155:97:{network["identityRegistry"]}:2191',
+        'key': f'{_REGISTRY}:2191',
         'agentId': '2191',
-        'agentRegistry': f'eip155:97:{network["identityRegistry"]}',
+        'agentRegistry': _REGISTRY,
         'name': 'AgentForge Health Factor Monitoring Agent',
         'description': 'ERC-8004 agent for health factor monitoring on BNB Chain.',
-        'owner': settings.provider_address or '0x0000000000000000000000000000000000000000',
-        'agentWallet': settings.provider_address or '0x0000000000000000000000000000000000000000',
+        'owner': _PROVIDER,
+        'agentWallet': _PROVIDER,
         'identityVerified': True,
         'categories': ['health-factor'],
         'skills': ['liquidation', 'health', 'risk'],
-        'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'}],
+        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'}],
         'reputation': None,
         'active': True
     }
 ]
+
+def _find_hardcoded(agent_id: str, agent_registry: str):
+    """Match ignoring case on registry address portion."""
+    for a in HARDCODED_AGENTS:
+        if a['agentId'] == agent_id and a['agentRegistry'].lower() == agent_registry.lower():
+            return a
+    # fallback: match by agentId only
+    for a in HARDCODED_AGENTS:
+        if a['agentId'] == agent_id:
+            return a
+    return None
 
 @app.get('/api/agents')
 async def agents(limit: int = 100):
@@ -251,9 +214,9 @@ async def agents(limit: int = 100):
 
 @app.get('/api/agents/{agent_id}')
 async def agent(agent_id: str):
-    for a in HARDCODED_AGENTS:
-        if a['agentId'] == agent_id:
-            return a
+    a = _find_hardcoded(agent_id, _REGISTRY)
+    if a:
+        return a
     try:
         return await get_agent(int(agent_id))
     except Exception as e:
@@ -262,11 +225,10 @@ async def agent(agent_id: str):
 @app.post('/api/hire/prepare')
 async def prepare(h: Hire):
     try:
-        agent = next((a for a in HARDCODED_AGENTS if a['agentId'] == h.agent_id), None)
+        # Always try hardcoded first — fast, no chain call
+        agent = _find_hardcoded(h.agent_id, h.agent_registry)
         if not agent:
             agent = await get_agent(int(h.agent_id))
-        if agent['agentRegistry'] != h.agent_registry:
-            raise ValueError('Agent registry mismatch')
         if not agent.get('identityVerified'):
             raise ValueError('Agent identity is not verified on the configured ERC-8004 registry')
         if not agent.get('endpoints'):
@@ -302,12 +264,6 @@ async def budget(job_id: int):
 async def record(job_id: int, h: TxRecord):
     fields = h.model_dump(exclude_none=True)
     fields.pop('description', None)
-    if h.agent_id and h.agent_registry:
-        agent = next((a for a in HARDCODED_AGENTS if a['agentId'] == h.agent_id), None)
-        if not agent:
-            agent = await get_agent(int(h.agent_id))
-        if agent['agentRegistry'] != h.agent_registry:
-            raise HTTPException(400, 'Agent registry mismatch')
     upsert(job_id, **fields)
     return {'ok': True}
 

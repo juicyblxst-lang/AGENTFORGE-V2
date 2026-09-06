@@ -177,12 +177,18 @@ async def budget(job_id: int):
     if not provider_ready():
         raise HTTPException(400, 'Provider is not configured: please set PROVIDER_PRIVATE_KEY and PROVIDER_ADDRESS in environment variables.')
     try:
-        tx = await asyncio.to_thread(quote_sync, job_id, settings.service_price_units)
+        # Validate the on-chain job before spending the provider's gas. The old
+        # implementation sent setBudget first and only then checked provider/status,
+        # which allowed arbitrary callers to make the provider sign budget txs.
         state = await asyncio.to_thread(read_job, job_id)
         if str(state['provider']).lower() != str(settings.provider_address).lower():
             raise HTTPException(403, 'Job provider does not match AgentForge provider')
         if state['statusName'] != 'open':
             raise HTTPException(409, f'Job is not Open (current status: {state["statusName"]})')
+        tx = await asyncio.to_thread(quote_sync, job_id, settings.service_price_units)
+        state = await asyncio.to_thread(read_job, job_id)
+        if str(state['provider']).lower() != str(settings.provider_address).lower() or state['statusName'] != 'open':
+            raise HTTPException(409, 'Job changed while setting budget')
         upsert(job_id, status='budgeted', budget_tx=tx)
         return {'ok': True, 'txHash': tx, 'onChain': state}
     except HTTPException:

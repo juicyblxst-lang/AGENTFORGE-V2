@@ -3,7 +3,7 @@ import json
 import time
 import httpx
 from .config import settings, BSC_NETWORKS
-from .db import upsert, get, claim_execution
+from .db import upsert, get, claim_execution, list_all
 from .discovery import get_agent
 from .chain_dynamic import read_job, dispute_window
 
@@ -22,7 +22,7 @@ async def quote(job_id: int, amount_units: int):
     if not provider_ready():
         raise RuntimeError('Provider not ready')
     wallet, client = provider_client()
-    job = client.get_job(job_id)   # dataclass with snake_case attributes
+    job = client.get_job(job_id)
     if job.status != 0:
         raise RuntimeError(f"Job not open (status={job.status})")
     amount = amount_units * (10 ** client.token_decimals())
@@ -82,7 +82,7 @@ async def process_job(job_id: int):
     from bnbagent.erc8183 import ERC8183JobOps
     from bnbagent.storage import LocalStorageProvider
     wallet, client = provider_client()
-    job = client.get_job(job_id)   # dataclass
+    job = client.get_job(job_id)
     if str(job.provider).lower() != str(settings.provider_address).lower() or job.status != 1:
         return
     record = get(job_id)
@@ -91,7 +91,11 @@ async def process_job(job_id: int):
     if not claim_execution(job_id):
         return
     try:
-        agent = await get_agent(int(record['agent_id']))
+        # Resolve agent from hardcoded list first to avoid chain scan
+        from .main import HARDCODED_AGENTS
+        agent = next((a for a in HARDCODED_AGENTS if a['agentId'] == record['agent_id']), None)
+        if not agent:
+            agent = await get_agent(int(record['agent_id']))
         if not agent.get('identityVerified'):
             raise RuntimeError('Agent not verified at execution time')
         if not agent.get('endpoints'):
@@ -118,8 +122,12 @@ async def reconcile_once():
     if not provider_ready():
         return
     _, client = provider_client()
-    counter = int(client.commerce.job_counter())
-    for jid in range(max(1, counter - 50), counter + 1):
+
+    # 1. Process jobs the DB already knows about
+    for row in list_all(limit=200):
+        jid = int(row['job_id'])
+        if row.get('status') in ('completed', 'error'):
+            continue
         try:
             state = read_job(jid)
             if str(state['provider']).lower() != str(settings.provider_address).lower():
@@ -142,7 +150,22 @@ async def reconcile_once():
             if existing and existing.get('status') not in ('submitted', 'completed'):
                 upsert(jid, status='error', error=str(e))
 
+    # 2. Scan recent chain jobs to catch new ones not yet in DB
+    try:
+        counter = int(client.commerce.job_counter())
+        for jid in range(max(1, counter - 5), counter + 1):
+            if get(jid):
+                continue
+            state = read_job(jid)
+            if str(state['provider']).lower() == str(settings.provider_address).lower() and state['statusName'] == 'funded':
+                upsert(jid, status='created')
+                await process_job(jid)
+    except Exception:
+        pass
+
 async def worker():
+    # 🔴 CRITICAL: Wait 15 seconds for Render health check and port binding
+    await asyncio.sleep(15)
     while True:
         try:
             await reconcile_once()

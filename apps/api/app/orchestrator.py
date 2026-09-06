@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 import httpx
+from web3 import Web3
 from .config import settings, BSC_NETWORKS
 from .db import upsert, get, claim_execution, list_all
 from .discovery import get_agent
@@ -9,45 +10,70 @@ from .chain_dynamic import read_job, dispute_window
 
 network = BSC_NETWORKS[settings.network]
 
+COMMERCE_ABI = [
+    {'type':'function','name':'setBudget','stateMutability':'nonpayable','inputs':[{'name':'jobId','type':'uint256'},{'name':'budget','type':'uint256'}],'outputs':[]},
+    {'type':'function','name':'getJob','stateMutability':'view','inputs':[{'name':'jobId','type':'uint256'}],'outputs':[{'type':'tuple','components':[{'name':'id','type':'uint256'},{'name':'client','type':'address'},{'name':'provider','type':'address'},{'name':'evaluator','type':'address'},{'name':'description','type':'string'},{'name':'budget','type':'uint256'},{'name':'expiredAt','type':'uint256'},{'name':'status','type':'uint8'},{'name':'hook','type':'address'},{'name':'submittedAt','type':'uint256'},{'name':'deliverable','type':'bytes32'}]}]},
+    {'type':'function','name':'paymentToken','stateMutability':'view','inputs':[],'outputs':[{'type':'address'}]},
+    {'type':'function','name':'settle','stateMutability':'nonpayable','inputs':[{'name':'jobId','type':'uint256'}],'outputs':[]},
+]
+
 def provider_ready():
     return bool(settings.provider_private_key and settings.provider_address and settings.provider_agent_base_url)
 
-def provider_client():
-    from bnbagent import EVMWalletProvider
-    from bnbagent.erc8183 import ERC8183Client
-    wallet = EVMWalletProvider(
-        password='agentforge-runtime',
-        private_key=settings.provider_private_key,
-        persist=False
+def get_w3():
+    return Web3(Web3.HTTPProvider(settings.rpc_url, request_kwargs={'timeout': 20}))
+
+def send_tx(w3, contract_fn, from_address, private_key):
+    """Build, sign and send a transaction with a fresh nonce."""
+    nonce = w3.eth.get_transaction_count(
+        Web3.to_checksum_address(from_address), 'pending'
     )
-    client = ERC8183Client(wallet_provider=wallet, network=settings.network)
-    return wallet, client
+    gas_price = w3.eth.gas_price
+    tx = contract_fn.build_transaction({
+        'from': Web3.to_checksum_address(from_address),
+        'nonce': nonce,
+        'gasPrice': int(gas_price * 1.2),
+    })
+    try:
+        tx['gas'] = w3.eth.estimate_gas(tx)
+    except Exception:
+        tx['gas'] = 300000
+    signed = w3.eth.account.sign_transaction(tx, private_key)
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    if receipt.status != 1:
+        raise RuntimeError(f'Transaction reverted: {tx_hash.hex()}')
+    return tx_hash.hex()
 
 async def quote(job_id: int, amount_units: int):
     if not provider_ready():
         raise RuntimeError('Provider not ready')
 
-    # Fresh client every call to avoid stale nonce
-    wallet, client = provider_client()
+    w3 = get_w3()
+    if not w3.is_connected():
+        raise RuntimeError('RPC unavailable')
 
-    # Get current nonce from chain and set it explicitly
-    from web3 import Web3
-    w3 = Web3(Web3.HTTPProvider(settings.rpc_url, request_kwargs={'timeout': 20}))
-    nonce = w3.eth.get_transaction_count(
-        Web3.to_checksum_address(settings.provider_address),
-        'pending'
+    commerce = w3.eth.contract(
+        address=Web3.to_checksum_address(network['commerce']),
+        abi=COMMERCE_ABI
     )
 
-    amount = amount_units * (10 ** client.token_decimals())
+    # Get token decimals
+    token_address = commerce.functions.paymentToken().call()
+    erc20 = w3.eth.contract(
+        address=Web3.to_checksum_address(token_address),
+        abi=[{'type':'function','name':'decimals','stateMutability':'view','inputs':[],'outputs':[{'type':'uint8'}]}]
+    )
+    decimals = erc20.functions.decimals().call()
+    amount = amount_units * (10 ** decimals)
 
-    result = client.set_budget(job_id, amount)
-    if not result.get('success', False):
-        raise RuntimeError(result.get('error') or 'setBudget failed')
-
-    tx = result.get('txHash') or result.get('tx_hash')
-    if not tx:
-        raise RuntimeError('setBudget returned no tx hash')
-    return tx
+    tx_hash = send_tx(
+        w3,
+        commerce.functions.setBudget(job_id, amount),
+        settings.provider_address,
+        settings.provider_private_key
+    )
+    return tx_hash
 
 async def execute_external(agent, task):
     endpoints = agent.get('endpoints', [])
@@ -96,9 +122,12 @@ async def process_job(job_id: int):
 
     from bnbagent.erc8183 import ERC8183JobOps
     from bnbagent.storage import LocalStorageProvider
+    from bnbagent import EVMWalletProvider
 
-    wallet, client = provider_client()
-    job = client.get_job(job_id)
+    wallet = EVMWalletProvider(password='agentforge-runtime', private_key=settings.provider_private_key, persist=False)
+    client_sdk = __import__('bnbagent.erc8183', fromlist=['ERC8183Client']).ERC8183Client(wallet_provider=wallet, network=settings.network)
+
+    job = client_sdk.get_job(job_id)
     if str(job.provider).lower() != str(settings.provider_address).lower() or job.status != 1:
         return
 
@@ -149,7 +178,11 @@ async def reconcile_once():
     if not provider_ready():
         return
 
-    _, client = provider_client()
+    from bnbagent import EVMWalletProvider
+    from bnbagent.erc8183 import ERC8183Client
+    wallet = EVMWalletProvider(password='agentforge-runtime', private_key=settings.provider_private_key, persist=False)
+    client_sdk = ERC8183Client(wallet_provider=wallet, network=settings.network)
+
     for row in list_all(limit=200):
         jid = int(row['job_id'])
         if row.get('status') in ('completed', 'error'):
@@ -161,15 +194,14 @@ async def reconcile_once():
             if state['statusName'] == 'funded':
                 await process_job(jid)
             elif state['statusName'] == 'submitted' and int(state['submitted_at']) + dispute_window() <= int(time.time()):
-                _, fresh_client = provider_client()
-                result = fresh_client.settle(jid)
-                if not result.get('success', False):
-                    raise RuntimeError(result.get('error') or 'settle failed')
-                settle_tx = result.get('txHash') or result.get('tx_hash')
-                if not settle_tx:
-                    raise RuntimeError('settle returned no tx hash')
+                w3 = get_w3()
+                commerce = w3.eth.contract(
+                    address=Web3.to_checksum_address(network['commerce']),
+                    abi=COMMERCE_ABI
+                )
+                settle_hash = send_tx(w3, commerce.functions.settle(jid), settings.provider_address, settings.provider_private_key)
                 if read_job(jid)['statusName'] == 'completed':
-                    upsert(jid, status='completed', settle_tx=settle_tx)
+                    upsert(jid, status='completed', settle_tx=settle_hash)
                 else:
                     raise RuntimeError('Settlement succeeded but job not Completed')
         except Exception as e:
@@ -178,7 +210,7 @@ async def reconcile_once():
                 upsert(jid, status='error', error=str(e))
 
     try:
-        counter = int(client.commerce.job_counter())
+        counter = int(client_sdk.commerce.job_counter())
         for jid in range(max(1, counter - 5), counter + 1):
             if get(jid):
                 continue

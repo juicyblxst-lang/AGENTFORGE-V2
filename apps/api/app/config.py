@@ -17,7 +17,7 @@ BSC_NETWORKS = {
         'chainId': 56,
         'identityRegistry': '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
         'commerce': '0xea4daa3100a767e86fded867729ae7446476eba6',
-        'router': '0x51895229e12f9876011789b04f8698af06ccd6da6',
+        'router': '0x51895229e12f9876011789b04f8698af06ccd6da',   # ✅ fixed (removed extra 6)
         'policy': '0x9c01845705b3078aa2e8cff7520a6376fd766de5',
         'rpc': 'https://bsc-dataseed.bnbchain.org',
     },

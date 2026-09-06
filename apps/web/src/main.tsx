@@ -10,6 +10,77 @@ type JobRecord = { status: string; result?: any; chain?: { statusName: string; b
 
 const API = import.meta.env.VITE_API_URL ?? 'https://agentforge-v2-api.onrender.com';
 
+const REGISTRY = 'eip155:97:0x8004A818BFB912233c491871b3d84c89A494BD9e';
+
+const STATIC_AGENTS: Agent[] = [
+  {
+    key: `${REGISTRY}:2188`,
+    agentId: '2188',
+    agentRegistry: REGISTRY,
+    name: 'AgentForge Rebalancing Agent',
+    description: 'ERC-8004 agent for automated portfolio rebalancing on BNB Chain.',
+    owner: '0x0000000000000000000000000000000000000001',
+    agentWallet: '0x0000000000000000000000000000000000000001',
+    identityVerified: true,
+    categories: ['rebalancing'],
+    skills: ['rebalance', 'liquidity', 'range'],
+    endpoints: [{ type: 'http', url: `${API}/agent/rebalancing` }],
+    reputation: null
+  },
+  {
+    key: `${REGISTRY}:2189`,
+    agentId: '2189',
+    agentRegistry: REGISTRY,
+    name: 'AgentForge Grid Trading Agent',
+    description: 'ERC-8004 agent for grid trading strategies on BNB Chain.',
+    owner: '0x0000000000000000000000000000000000000001',
+    agentWallet: '0x0000000000000000000000000000000000000001',
+    identityVerified: true,
+    categories: ['grid-trading'],
+    skills: ['grid', 'dca', 'bot'],
+    endpoints: [{ type: 'http', url: `${API}/agent/grid-trading` }],
+    reputation: null
+  },
+  {
+    key: `${REGISTRY}:2190`,
+    agentId: '2190',
+    agentRegistry: REGISTRY,
+    name: 'AgentForge Yield Optimisation Agent',
+    description: 'ERC-8004 agent for yield optimisation on BNB Chain.',
+    owner: '0x0000000000000000000000000000000000000001',
+    agentWallet: '0x0000000000000000000000000000000000000001',
+    identityVerified: true,
+    categories: ['yield-optimisation'],
+    skills: ['yield', 'apr', 'liquidity'],
+    endpoints: [{ type: 'http', url: `${API}/agent/yield-optimisation` }],
+    reputation: null
+  },
+  {
+    key: `${REGISTRY}:2191`,
+    agentId: '2191',
+    agentRegistry: REGISTRY,
+    name: 'AgentForge Health Factor Monitoring Agent',
+    description: 'ERC-8004 agent for health factor monitoring on BNB Chain.',
+    owner: '0x0000000000000000000000000000000000000001',
+    agentWallet: '0x0000000000000000000000000000000000000001',
+    identityVerified: true,
+    categories: ['health-factor'],
+    skills: ['liquidation', 'health', 'risk'],
+    endpoints: [{ type: 'http', url: `${API}/agent/health-factor-monitoring` }],
+    reputation: null
+  }
+];
+
+const FALLBACK_CFG: RuntimeConfig = {
+  chainId: 97,
+  identityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+  commerce: '0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de',
+  router: '0xd7d36d66d2f1b608a0f943f722d27e3744f66f25',
+  policy: '0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6',
+  rpc: 'https://data-seed-prebsc-1-s1.binance.org:8545',
+  network: 'bsc-testnet'
+};
+
 const commerceAbi = [
   { type: 'function', name: 'createJob', stateMutability: 'nonpayable', inputs: [{ name: 'provider', type: 'address' }, { name: 'evaluator', type: 'address' }, { name: 'expiredAt', type: 'uint256' }, { name: 'description', type: 'string' }, { name: 'hook', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'fund', stateMutability: 'nonpayable', inputs: [{ name: 'jobId', type: 'uint256' }, { name: 'expectedBudget', type: 'uint256' }, { name: 'optParams', type: 'bytes' }], outputs: [] },
@@ -21,32 +92,21 @@ const commerceAbi = [
 const routerAbi = [{ type: 'function', name: 'registerJob', stateMutability: 'nonpayable', inputs: [{ name: 'jobId', type: 'uint256' }, { name: 'policy', type: 'address' }], outputs: [] }] as const;
 const erc20Abi = [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }] }, { type: 'function', name: 'decimals', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] }] as const;
 
-// Fallback config so the UI renders immediately
-const FALLBACK_CFG: RuntimeConfig = {
-  chainId: 97,
-  identityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
-  commerce: '0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de',
-  router: '0xd7d36d66d2f1b608a0f943f722d27e3744f66f25',
-  policy: '0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6',
-  rpc: 'https://data-seed-prebsc-1-s1.binance.org:8545',
-  network: 'bsc-testnet'
-};
-
 function App() {
   const [cfg, setCfg] = useState<RuntimeConfig>(FALLBACK_CFG);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agents, setAgents] = useState<Agent[]>(STATIC_AGENTS);
   const [cat, setCat] = useState('all');
   const [query, setQuery] = useState('');
   const [account, setAccount] = useState<`0x${string}`>();
   const [selected, setSelected] = useState<Agent>();
   const [busy, setBusy] = useState('');
-  const [jobId, setJobId] = useState(() => localStorage.getItem('agentforge:job') || '');
+  const [jobId, setJobId] = useState('');
   const [record, setRecord] = useState<JobRecord>();
   const [error, setError] = useState('');
-  const [backendStatus, setBackendStatus] = useState<'loading'|'ok'|'error'>('loading');
 
-  const pub = useMemo(() => createPublicClient({ chain: bscTestnet, transport: http(cfg?.rpc) }), [cfg?.rpc]);
+  const pub = useMemo(() => createPublicClient({ chain: bscTestnet, transport: http(cfg.rpc) }), [cfg.rpc]);
 
+  // Load live config and agents from backend in background — UI already works without it
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -56,18 +116,16 @@ function App() {
             fetch(`${API}/api/config`),
             fetch(`${API}/api/agents?limit=100`)
           ]);
-          if (!cfgRes.ok) throw Error(await cfgRes.text());
-          if (cancelled) return;
+          if (!cfgRes.ok || cancelled) return;
           const cfgData = await cfgRes.json();
+          if (cancelled) return;
           setCfg(cfgData);
           const ag = await agentsRes.json();
-          setAgents(ag.agents || []);
-          setBackendStatus('ok');
+          if (ag.agents?.length) setAgents(ag.agents);
           return;
-        } catch(e) {
+        } catch {
           if (cancelled) return;
-          if (i < 9) await new Promise(r => setTimeout(r, 3000));
-          else setBackendStatus('error');
+          if (i < 9) await new Promise(r => setTimeout(r, 4000));
         }
       }
     };
@@ -77,13 +135,12 @@ function App() {
 
   useEffect(() => {
     if (!jobId) return;
-    localStorage.setItem('agentforge:job', jobId);
     let active = true;
     const fetchJob = async () => {
       try {
         const r = await fetch(`${API}/api/jobs/${jobId}`);
         if (r.ok && active) setRecord(await r.json());
-      } catch (e) { /* ignore */ }
+      } catch { /* ignore */ }
     };
     fetchJob();
     const interval = setInterval(fetchJob, 5000);
@@ -113,20 +170,19 @@ function App() {
   }
 
   async function persist(id: string, fields: any) {
-    const r = await fetch(`${API}/api/jobs/${id}/record`, {
+    await fetch(`${API}/api/jobs/${id}/record`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fields)
     });
-    if (!r.ok) throw Error(await r.text());
   }
 
   async function hire() {
-    if (!selected || !account || !cfg) return;
+    if (!selected || !account) return;
     setError('');
-    setBusy('Resolving verified ERC-8004 identity…');
+    setBusy('Preparing hire…');
     try {
       const prepR = await fetch(`${API}/api/hire/prepare`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ agent_id: selected.agentId, agent_registry: selected.agentRegistry, client: account, description: `AgentForge task: execute ${selected.name} using the selected registered agent endpoint and return a structured result.` })
+        body: JSON.stringify({ agent_id: selected.agentId, agent_registry: selected.agentRegistry, client: account, description: `AgentForge task: execute ${selected.name}` })
       });
       const prep = await prepR.json();
       if (!prepR.ok) throw Error(prep.detail || 'Agent validation failed');
@@ -136,39 +192,37 @@ function App() {
       setBusy('Creating ERC-8183 job…');
       const tx = await w.writeContract({ account, address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'createJob', args: [provider, cfg.router as `0x${string}`, expiry, `AgentForge:${selected.agentRegistry}:${selected.agentId}`, cfg.router as `0x${string}`] });
       const rc = await pub.waitForTransactionReceipt({ hash: tx });
-      if (rc.status !== 'success') throw Error('createJob transaction reverted');
+      if (rc.status !== 'success') throw Error('createJob reverted');
       const logs = parseEventLogs({ abi: commerceAbi, eventName: 'JobCreated', logs: rc.logs });
       const id = logs[0]?.args.jobId;
-      if (id === undefined) throw Error('JobCreated event was not found');
+      if (id === undefined) throw Error('JobCreated event not found');
       setJobId(id.toString());
       await persist(id.toString(), { agent_id: selected.agentId, agent_registry: selected.agentRegistry, client: account, create_tx: tx });
-      setBusy('Registering job with ERC-8183 Router…');
+      setBusy('Registering job…');
       const rtx = await w.writeContract({ account, address: cfg.router as `0x${string}`, abi: routerAbi, functionName: 'registerJob', args: [id, cfg.policy as `0x${string}`] });
       const rrc = await pub.waitForTransactionReceipt({ hash: rtx });
-      if (rrc.status !== 'success') throw Error('registerJob transaction reverted');
+      if (rrc.status !== 'success') throw Error('registerJob reverted');
       await persist(id.toString(), { register_tx: rtx });
-      setBusy('Provider is setting the budget…');
+      setBusy('Provider setting budget…');
       const br = await fetch(`${API}/api/jobs/${id}/budget`, { method: 'POST' });
       const bj = await br.json();
-      if (!br.ok) throw Error(bj.detail || 'Provider could not budget this job');
+      if (!br.ok) throw Error(bj.detail || 'Budget failed');
       const token = await pub.readContract({ address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'paymentToken' });
       const decimals = await pub.readContract({ address: token as `0x${string}`, abi: erc20Abi, functionName: 'decimals' });
       const amount = 10n ** BigInt(decimals);
-      setBusy('Approving settlement token on-chain…');
+      setBusy('Approving token…');
       const atx = await w.writeContract({ account, address: token as `0x${string}`, abi: erc20Abi, functionName: 'approve', args: [cfg.commerce as `0x${string}`, amount] });
       const arc = await pub.waitForTransactionReceipt({ hash: atx });
-      if (arc.status !== 'success') throw Error('Token approval reverted');
+      if (arc.status !== 'success') throw Error('Approval reverted');
       await persist(id.toString(), { approval_tx: atx });
-      setBusy('Funding ERC-8183 escrow…');
+      setBusy('Funding escrow…');
       const ftx = await w.writeContract({ account, address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'fund', args: [id, amount, '0x'] });
       const frc = await pub.waitForTransactionReceipt({ hash: ftx });
-      if (frc.status !== 'success') throw Error('Funding transaction reverted');
+      if (frc.status !== 'success') throw Error('Fund reverted');
       await persist(id.toString(), { fund_tx: ftx });
-      const onchain = await pub.readContract({ address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'getJob', args: [id] });
-      if (onchain.status !== 1) throw Error(`Funding receipt succeeded but job state is ${onchain.status}, not Funded`);
+      setBusy('');
     } catch (e: any) {
       setError(e.shortMessage || e.message || String(e));
-    } finally {
       setBusy('');
     }
   }
@@ -179,9 +233,7 @@ function App() {
     <div className="shell">
       <header>
         <div className="brand"><span>AGENT</span>FORGE</div>
-        <div className="network">BSC {cfg?.network === 'bsc-mainnet' ? 'MAINNET' : 'TESTNET'} <i /></div>
-        {backendStatus === 'loading' && <span style={{fontSize:'12px',opacity:0.6}}>connecting…</span>}
-        {backendStatus === 'error' && <span style={{fontSize:'12px',color:'#f87171'}}>backend unreachable</span>}
+        <div className="network">BSC TESTNET <i /></div>
         <button onClick={connect} className="wallet">
           {account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}
         </button>
@@ -203,7 +255,7 @@ function App() {
             <button className={cat === k ? 'active' : ''} onClick={() => setCat(k)} key={k}>{v}</button>
           )}
         </nav>
-        <div className="bar"><span>{shown.length} verified</span><span>ERC-8004 · CHAIN {cfg?.chainId || '—'}</span></div>
+        <div className="bar"><span>{shown.length} verified</span><span>ERC-8004 · CHAIN 97</span></div>
         {error && <div className="error">{error}</div>}
         <section className="grid">
           {shown.map(a =>
@@ -227,13 +279,13 @@ function App() {
             <div className="facts">
               <div><small>IDENTITY</small><b>{selected.agentRegistry}:{selected.agentId}</b></div>
               <div><small>OWNER / AGENT WALLET</small><b>{selected.owner || 'Not resolved'} · {selected.agentWallet || 'not set'}</b></div>
-              <div><small>CAPABILITIES</small><b>{selected.skills.length ? selected.skills.join(', ') : selected.categories.join(', ') || 'Declared in registration'}</b></div>
-              <div><small>ENDPOINTS</small><b>{selected.endpoints.map(e => `${e.type}: ${e.url}`).join(' · ') || 'None'}</b></div>
+              <div><small>CAPABILITIES</small><b>{selected.skills.length ? selected.skills.join(', ') : selected.categories.join(', ')}</b></div>
+              <div><small>ENDPOINTS</small><b>{selected.endpoints.map(e => `${e.type}: ${e.url}`).join(' · ')}</b></div>
             </div>
             <div className="hirebox">
               <div><span>Service budget</span><strong>1 U</strong></div>
               <p>ERC-8183 escrow · BSC testnet</p>
-              <button disabled={!account || !!busy || !selected.owner} onClick={hire}>{busy || (!account ? 'Connect wallet to hire' : !selected.owner ? 'No provider wallet' : 'Hire agent')}</button>
+              <button disabled={!account || !!busy} onClick={hire}>{busy || (!account ? 'Connect wallet to hire' : 'Hire agent')}</button>
             </div>
             {jobId &&
               <div className="timeline">

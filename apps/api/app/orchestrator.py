@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 import httpx
-from web3 import Web3
 from .config import settings, BSC_NETWORKS
 from .db import upsert, get, claim_execution
 from .discovery import get_agent
@@ -24,22 +23,37 @@ async def quote(job_id: int, amount_units: int):
         raise RuntimeError('Provider requires PROVIDER_PRIVATE_KEY, PROVIDER_ADDRESS and PROVIDER_AGENT_BASE_URL')
 
     wallet, client = provider_client()
-    
-    # Verify job is open and provider matches
     job = client.get_job(job_id)
     if str(job.provider).lower() != str(settings.provider_address).lower():
-        raise RuntimeError(f"Provider mismatch: job provider={job.provider}, configured={settings.provider_address}")
-    if job.status != 0:
-        raise RuntimeError(f"Job not open (status={job.status})")
-    
+        raise RuntimeError(f'Provider mismatch: job provider={job.provider}, configured={settings.provider_address}')
+    if int(job.status) != 0:
+        raise RuntimeError(f'Job not open (status={int(job.status)})')
+
     amount = amount_units * (10 ** client.token_decimals())
-    result = client.set_budget(job_id, amount)
+    # The current SDK facade has a stale two-argument set_budget wrapper while
+    # CommerceClient exposes the deployed three-argument Solidity shape
+    # (jobId, amount, optParams). Call the low-level client explicitly so the
+    # provider uses the canonical on-chain function rather than relying on the
+    # stale facade.
+    try:
+        result = client.commerce.set_budget(job_id, amount, b'')
+    except Exception as exc:
+        raise RuntimeError(f'setBudget transaction construction failed: {exc}') from exc
     if not result.get('success', False):
-        error = result.get('error') or 'setBudget failed'
-        raise RuntimeError(f'setBudget failed: {error}')
-    tx = result.get('txHash') or result.get('tx_hash')
+        error = result.get('error') or result.get('message') or repr(result)
+        raise RuntimeError(f'setBudget transaction failed: {error}')
+    tx = result.get('txHash') or result.get('tx_hash') or result.get('transactionHash')
     if not tx:
-        raise RuntimeError('setBudget returned no transaction hash')
+        raise RuntimeError(f'setBudget returned no transaction hash: {result}')
+    # Do not trust the SDK response alone. Verify the receipt and resulting
+    # authoritative Commerce state before reporting success to the browser.
+    w3 = client.w3
+    receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=120)
+    if int(receipt.status) != 1:
+        raise RuntimeError(f'setBudget transaction reverted: {tx}')
+    state = read_job(job_id)
+    if state['statusName'] != 'open' or int(state['budget']) != amount:
+        raise RuntimeError(f'setBudget receipt succeeded but on-chain state is invalid: status={state["statusName"]}, budget={state["budget"]}, expected={amount}')
     return tx
 
 async def execute_external(agent, task):
@@ -58,17 +72,7 @@ async def execute_external(agent, task):
                         url = card['url']
                     elif not url.rstrip('/').endswith('/message/send'):
                         url = url.rstrip('/') + '/message/send'
-                    payload = {
-                        'jsonrpc': '2.0',
-                        'id': str(time.time_ns()),
-                        'method': 'message/send',
-                        'params': {
-                            'message': {
-                                'role': 'user',
-                                'parts': [{'kind': 'text', 'text': task}]
-                            }
-                        }
-                    }
+                    payload = {'jsonrpc': '2.0', 'id': str(time.time_ns()), 'method': 'message/send', 'params': {'message': {'role': 'user', 'parts': [{'kind': 'text', 'text': task}]}}}
                 else:
                     payload = {'task': task}
                 r = await http.post(url, json=payload, headers={'content-type': 'application/json', 'accept': 'application/json'})
@@ -141,6 +145,9 @@ async def reconcile_once():
                 settle_tx = result.get('txHash') or result.get('tx_hash')
                 if not settle_tx:
                     raise RuntimeError('settle returned no transaction hash')
+                receipt = client.w3.eth.wait_for_transaction_receipt(settle_tx, timeout=120)
+                if int(receipt.status) != 1:
+                    raise RuntimeError(f'settle transaction reverted: {settle_tx}')
                 if read_job(jid)['statusName'] == 'completed':
                     upsert(jid, status='completed', settle_tx=settle_tx)
                 else:

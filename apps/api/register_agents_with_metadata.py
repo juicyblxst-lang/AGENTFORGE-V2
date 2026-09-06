@@ -1,6 +1,4 @@
 import os
-import json
-import base64
 from pathlib import Path
 from dotenv import load_dotenv
 from web3 import Web3
@@ -29,41 +27,13 @@ REGISTRY_ABI = [
     }
 ]
 
-METADATA = {
-    'Rebalancing': {
-        'name': 'AgentForge Rebalancing Agent',
-        'description': 'Portfolio rebalancing, liquidity range management, and position reset.',
-        'category': 'Rebalancing',
-        'categories': ['rebalancing'],
-        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/rebalancing'}]
-    },
-    'Grid Trading': {
-        'name': 'AgentForge Grid Trading Agent',
-        'description': 'Automated grid trading, DCA, and order placement strategies.',
-        'category': 'Grid Trading',
-        'categories': ['grid-trading'],
-        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/grid-trading'}]
-    },
-    'Yield Optimisation': {
-        'name': 'AgentForge Yield Optimisation Agent',
-        'description': 'Yield farming, liquidity routing, and APR optimisation.',
-        'category': 'Yield Optimisation',
-        'categories': ['yield-optimization'],
-        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'}]
-    },
-    'Health Factor Monitoring': {
-        'name': 'AgentForge Health Factor Monitoring Agent',
-        'description': 'Liquidation risk monitoring, collateral health, and lending protection.',
-        'category': 'Health Factor Monitoring',
-        'categories': ['health-factor'],
-        'endpoints': [{'type': 'http', 'url': 'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'}]
-    }
+# Use your deployed API's metadata endpoints
+AGENT_URIS = {
+    'Rebalancing': 'https://agentforge-v2-api.onrender.com/api/metadata/rebalancing',
+    'Grid Trading': 'https://agentforge-v2-api.onrender.com/api/metadata/grid-trading',
+    'Yield Optimisation': 'https://agentforge-v2-api.onrender.com/api/metadata/yield-optimisation',
+    'Health Factor Monitoring': 'https://agentforge-v2-api.onrender.com/api/metadata/health-factor-monitoring',
 }
-
-def make_data_uri(metadata):
-    json_str = json.dumps(metadata, ensure_ascii=False, separators=(',', ':'))
-    b64 = base64.b64encode(json_str.encode()).decode()
-    return f'data:application/json;base64,{b64}'
 
 def main():
     private_key = os.getenv('PROVIDER_PRIVATE_KEY')
@@ -80,14 +50,13 @@ def main():
     account = w3.eth.account.from_key(private_key)
     registry = w3.eth.contract(address=Web3.to_checksum_address(IDENTITY_REGISTRY), abi=REGISTRY_ABI)
 
-    for category, meta in METADATA.items():
-        uri = make_data_uri(meta)
-        print(f'Registering {category}...')
+    for category, uri in AGENT_URIS.items():
+        print(f'Registering {category} with URI: {uri}')
         nonce = w3.eth.get_transaction_count(account.address, 'pending')
         tx = registry.functions.register(uri).build_transaction({
             'from': account.address,
             'nonce': nonce,
-            'gas': 300000,
+            'gas': 300000,          # should be enough for a short URL
             'gasPrice': w3.eth.gas_price,
             'chainId': CHAIN_ID,
         })

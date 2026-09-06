@@ -26,7 +26,6 @@ def get_w3():
     return Web3(Web3.HTTPProvider(settings.rpc_url, request_kwargs={'timeout': 20}))
 
 def send_tx(w3, contract_fn, from_address, private_key):
-    """Build, sign and send a transaction with a fresh pending nonce."""
     nonce = w3.eth.get_transaction_count(Web3.to_checksum_address(from_address), 'pending')
     gas_price = w3.eth.gas_price
     tx = contract_fn.build_transaction({'from': Web3.to_checksum_address(from_address), 'nonce': nonce, 'gasPrice': int(gas_price * 1.2)})
@@ -137,10 +136,6 @@ async def reconcile_once():
     for row in list_all(limit=200):
         jid = int(row['job_id'])
         db_status = row.get('status')
-        # Completed is terminal. Errors are deliberately retryable because a failed
-        # provider call/RPC must never strand an on-chain FUNDED job in escrow.
-        # Apply a short backoff so a permanently broken endpoint does not get
-        # hammered every poll cycle.
         if db_status == 'completed':
             continue
         if db_status == 'error':
@@ -176,9 +171,24 @@ async def reconcile_once():
             if get(jid):
                 continue
             state = read_job(jid)
-            if str(state['provider']).lower() == str(settings.provider_address).lower() and state['statusName'] == 'funded':
-                upsert(jid, status='created')
-                await process_job(jid)
+            if str(state['provider']).lower() != str(settings.provider_address).lower() or state['statusName'] != 'funded':
+                continue
+            description = str(state.get('description') or '')
+            prefix = 'AgentForge:'
+            if not description.startswith(prefix):
+                continue
+            identity = description[len(prefix):]
+            if ':' not in identity:
+                continue
+            agent_registry, agent_id = identity.rsplit(':', 1)
+            if not agent_id.isdigit() or not agent_registry.startswith('eip155:97:'):
+                continue
+            # Reconstruct the execution record from on-chain state. This makes
+            # the DB an observability layer rather than a prerequisite for work:
+            # if the browser loses connectivity after FUND, the funded job is
+            # still recoverable by the provider worker.
+            upsert(jid, status='created', agent_id=agent_id, agent_registry=agent_registry, client=state['client'])
+            await process_job(jid)
     except Exception:
         pass
 

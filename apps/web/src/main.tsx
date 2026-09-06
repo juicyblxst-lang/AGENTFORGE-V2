@@ -7,7 +7,7 @@ import './styles.css';
 type Agent={key:string;agentId:string;agentRegistry:string;name:string;description:string;owner?:string;agentWallet?:string;identityVerified?:boolean;categories:string[];skills:any[];endpoints:{type:string;url:string}[];reputation:any};
 type RuntimeConfig={chainId:number;identityRegistry:string;commerce:string;router:string;policy:string;rpc:string;network:string};
 type JobRecord={status:string;result?:any;chain?:{statusName:string;budget:number;submittedAt:number;deliverable:string;provider:string;client:string};error?:string;create_tx?:string;register_tx?:string;budget_tx?:string;approval_tx?:string;fund_tx?:string;submit_tx?:string;settle_tx?:string};
-const API=(import.meta as any).env?.VITE_API_URL||'http://localhost:8000';
+const API='https://agentforge-v2-api.onrender.com';
 const commerceAbi=[
  {type:'function',name:'createJob',stateMutability:'nonpayable',inputs:[{name:'provider',type:'address'},{name:'evaluator',type:'address'},{name:'expiredAt',type:'uint256'},{name:'description',type:'string'},{name:'hook',type:'address'}],outputs:[{type:'uint256'}]},
  {type:'function',name:'fund',stateMutability:'nonpayable',inputs:[{name:'jobId',type:'uint256'},{name:'expectedBudget',type:'uint256'},{name:'optParams',type:'bytes'}],outputs:[]},

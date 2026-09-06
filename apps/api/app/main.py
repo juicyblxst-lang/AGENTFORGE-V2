@@ -1,4 +1,4 @@
-kimport asyncio
+import asyncio
 import json
 import logging
 from fastapi import FastAPI, HTTPException
@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from .config import settings, BSC_NETWORKS
-from .db import init_db, upsert, get, list_all  # we'll add list_all in db
+from .db import init_db, upsert, get, list_all
 from .discovery import discover, get_agent
 from .chain_dynamic import read_job, verify_receipt
 from .orchestrator import quote, worker, provider_ready
@@ -202,7 +202,6 @@ async def agents(limit: int = 100):
             return {'agents': discovered}
     except Exception as e:
         logger.error(f"Discovery failed: {e}")
-    # fallback to hardcoded
     return {'agents': HARDCODED_AGENTS[:limit]}
 
 @app.get('/api/agents/{agent_id}')
@@ -299,8 +298,6 @@ async def job(job_id: int):
 
 @app.get('/api/jobs')
 async def list_jobs(limit: int = 50):
-    # This is a debug endpoint; we need to implement list_all in db.py
-    from .db import list_all
     return {'jobs': list_all(limit)}
 
 @app.get('/erc8183/job/{job_id}/response')

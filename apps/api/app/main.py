@@ -9,89 +9,215 @@ from .discovery import discover, get_agent
 from .chain_dynamic import read_job, verify_receipt
 from .orchestrator import quote, worker
 
-network=BSC_NETWORKS[settings.network]
-app=FastAPI(title='AgentForge API',version='2.3.0')
-app.add_middleware(CORSMiddleware,allow_origins=list(settings.cors_origins),allow_credentials=True,allow_methods=['*'],allow_headers=['*'])
-worker_task=None
+network = BSC_NETWORKS[settings.network]
+app = FastAPI(title='AgentForge API', version='2.3.0')
+app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
+worker_task = None
 
 class Hire(BaseModel):
-    agent_id:str; agent_registry:str; client:str; description:str=Field(min_length=1,max_length=4000)
+    agent_id: str
+    agent_registry: str
+    client: str
+    description: str = Field(min_length=1, max_length=4000)
+
 class TxRecord(BaseModel):
-    agent_id:str|None=None; agent_registry:str|None=None; client:str|None=None; description:str|None=None; create_tx:str|None=None; register_tx:str|None=None; budget_tx:str|None=None; approval_tx:str|None=None; fund_tx:str|None=None; submit_tx:str|None=None; settle_tx:str|None=None
+    agent_id: str | None = None
+    agent_registry: str | None = None
+    client: str | None = None
+    description: str | None = None
+    create_tx: str | None = None
+    register_tx: str | None = None
+    budget_tx: str | None = None
+    approval_tx: str | None = None
+    fund_tx: str | None = None
+    submit_tx: str | None = None
+    settle_tx: str | None = None
 
 @app.on_event('startup')
 async def startup():
-    global worker_task; init_db(); worker_task=asyncio.create_task(worker())
+    global worker_task
+    init_db()
+    worker_task = asyncio.create_task(worker())
+
 @app.on_event('shutdown')
 async def shutdown():
-    if worker_task: worker_task.cancel()
+    if worker_task:
+        worker_task.cancel()
+
 @app.get('/health')
 async def health():
-    return {'ok':True,'network':settings.network,'chainId':network['chainId'],'providerConfigured':bool(settings.provider_private_key and settings.provider_address and settings.provider_agent_base_url),'contracts':{'identityRegistry':network['identityRegistry'],'commerce':network['commerce'],'router':network['router'],'policy':network['policy']}}
+    return {
+        'ok': True,
+        'network': settings.network,
+        'chainId': network['chainId'],
+        'providerConfigured': bool(settings.provider_private_key and settings.provider_address and settings.provider_agent_base_url),
+        'contracts': {
+            'identityRegistry': network['identityRegistry'],
+            'commerce': network['commerce'],
+            'router': network['router'],
+            'policy': network['policy']
+        }
+    }
+
 @app.get('/api/config')
-async def config(): return {**network,'network':settings.network}
+async def config():
+    return {**network, 'network': settings.network}
+
 @app.get('/api/metadata/rebalancing')
 async def rebalancing_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Rebalancing Agent','description':'ERC-8004 agent metadata for the AgentForge Rebalancing category.','category':'Rebalancing','active':True}
+    return {
+        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+        'name': 'AgentForge Rebalancing Agent',
+        'description': 'ERC-8004 agent metadata for the AgentForge Rebalancing category.',
+        'category': 'Rebalancing',
+        'active': True,
+        'endpoints': [
+            {
+                'type': 'http',
+                'url': 'https://your-rebalancing-agent-service.com/endpoint'  # REPLACE ME
+            }
+        ]
+    }
+
 @app.get('/api/metadata/grid-trading')
 async def grid_trading_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Grid Trading Agent','description':'ERC-8004 agent metadata for the AgentForge Grid Trading category.','category':'Grid Trading','active':True}
+    return {
+        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+        'name': 'AgentForge Grid Trading Agent',
+        'description': 'ERC-8004 agent metadata for the AgentForge Grid Trading category.',
+        'category': 'Grid Trading',
+        'active': True,
+        'endpoints': [
+            {
+                'type': 'http',
+                'url': 'https://your-grid-trading-agent-service.com/endpoint'  # REPLACE ME
+            }
+        ]
+    }
+
 @app.get('/api/metadata/yield-optimisation')
 async def yield_optimisation_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Yield Optimisation Agent','description':'ERC-8004 agent metadata for the AgentForge Yield Optimisation category.','category':'Yield Optimisation','active':True}
+    return {
+        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+        'name': 'AgentForge Yield Optimisation Agent',
+        'description': 'ERC-8004 agent metadata for the AgentForge Yield Optimisation category.',
+        'category': 'Yield Optimisation',
+        'active': True,
+        'endpoints': [
+            {
+                'type': 'http',
+                'url': 'https://your-yield-optimisation-agent-service.com/endpoint'  # REPLACE ME
+            }
+        ]
+    }
+
 @app.get('/api/metadata/health-factor-monitoring')
 async def health_factor_monitoring_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Health Factor Monitoring Agent','description':'ERC-8004 agent metadata for the AgentForge Health Factor Monitoring category.','category':'Health Factor Monitoring','active':True}
+    return {
+        'type': 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+        'name': 'AgentForge Health Factor Monitoring Agent',
+        'description': 'ERC-8004 agent metadata for the AgentForge Health Factor Monitoring category.',
+        'category': 'Health Factor Monitoring',
+        'active': True,
+        'endpoints': [
+            {
+                'type': 'http',
+                'url': 'https://your-health-factor-agent-service.com/endpoint'  # REPLACE ME
+            }
+        ]
+    }
+
 @app.get('/api/agents')
-async def agents(limit:int=100):
-    try:return {'agents':await discover(limit)}
-    except Exception as e:raise HTTPException(502,f'Discovery unavailable: {e}')
+async def agents(limit: int = 100):
+    try:
+        return {'agents': await discover(limit)}
+    except Exception as e:
+        raise HTTPException(502, f'Discovery unavailable: {e}')
+
 @app.get('/api/agents/{agent_id}')
-async def agent(agent_id:str):
-    try:return await get_agent(int(agent_id))
-    except Exception as e:raise HTTPException(404,f'Agent not found: {e}')
+async def agent(agent_id: str):
+    try:
+        return await get_agent(int(agent_id))
+    except Exception as e:
+        raise HTTPException(404, f'Agent not found: {e}')
+
 @app.post('/api/hire/prepare')
-async def prepare(h:Hire):
+async def prepare(h: Hire):
     try:
-        agent=await get_agent(int(h.agent_id))
-        if agent['agentRegistry']!=h.agent_registry:raise ValueError('Agent registry mismatch')
-        if not agent.get('identityVerified'):raise ValueError('Agent identity is not verified on the configured ERC-8004 registry')
-        if not agent.get('endpoints'):raise ValueError('Agent has no executable endpoint')
-        if not settings.provider_address:raise ValueError('Provider is not configured: PROVIDER_ADDRESS is required')
-        return {'agent':agent,'provider':settings.provider_address,'evaluator':network['router'],'hook':network['router'],'policy':network['policy'],'expiresInSeconds':7200}
-    except Exception as e:raise HTTPException(400,str(e))
+        agent = await get_agent(int(h.agent_id))
+        if agent['agentRegistry'] != h.agent_registry:
+            raise ValueError('Agent registry mismatch')
+        if not agent.get('identityVerified'):
+            raise ValueError('Agent identity is not verified on the configured ERC-8004 registry')
+        if not agent.get('endpoints'):
+            raise ValueError('Agent has no executable endpoint')
+        if not settings.provider_address:
+            raise ValueError('Provider is not configured: PROVIDER_ADDRESS is required')
+        return {
+            'agent': agent,
+            'provider': settings.provider_address,
+            'evaluator': network['router'],
+            'hook': network['router'],
+            'policy': network['policy'],
+            'expiresInSeconds': 7200
+        }
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
 @app.post('/api/jobs/{job_id}/budget')
-async def budget(job_id:int):
+async def budget(job_id: int):
     try:
-        tx=await quote(job_id,settings.service_price_units); state=read_job(job_id)
-        if state['statusName']!='open' or state['budget']<=0:raise RuntimeError(f'On-chain verification failed after setBudget: {state}')
-        upsert(job_id,status='budgeted',budget_tx=tx); return {'ok':True,'txHash':tx,'onChain':state}
-    except Exception as e:raise HTTPException(400,str(e))
+        tx = await quote(job_id, settings.service_price_units)
+        state = read_job(job_id)
+        if state['statusName'] != 'open' or state['budget'] <= 0:
+            raise RuntimeError(f'On-chain verification failed after setBudget: {state}')
+        upsert(job_id, status='budgeted', budget_tx=tx)
+        return {'ok': True, 'txHash': tx, 'onChain': state}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
 @app.post('/api/jobs/{job_id}/record')
-async def record(job_id:int,h:TxRecord):
-    fields=h.model_dump(exclude_none=True); fields.pop('description',None)
+async def record(job_id: int, h: TxRecord):
+    fields = h.model_dump(exclude_none=True)
+    fields.pop('description', None)
     if h.agent_id and h.agent_registry:
-        agent=await get_agent(int(h.agent_id))
-        if agent['agentRegistry']!=h.agent_registry:raise HTTPException(400,'Agent registry mismatch')
-    upsert(job_id,**fields); return {'ok':True}
+        agent = await get_agent(int(h.agent_id))
+        if agent['agentRegistry'] != h.agent_registry:
+            raise HTTPException(400, 'Agent registry mismatch')
+    upsert(job_id, **fields)
+    return {'ok': True}
+
 @app.post('/api/tx/verify')
-async def tx_verify(tx_hash:str):
-    try:return verify_receipt(tx_hash)
-    except Exception as e:raise HTTPException(400,str(e))
+async def tx_verify(tx_hash: str):
+    try:
+        return verify_receipt(tx_hash)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
 @app.get('/api/jobs/{job_id}/chain')
-async def chain_job(job_id:int):
-    try:return read_job(job_id)
-    except Exception as e:raise HTTPException(502,f'On-chain read failed: {e}')
+async def chain_job(job_id: int):
+    try:
+        return read_job(job_id)
+    except Exception as e:
+        raise HTTPException(502, f'On-chain read failed: {e}')
+
 @app.get('/api/jobs/{job_id}')
-async def job(job_id:int):
-    r=get(job_id)
-    if not r:raise HTTPException(404,'Execution not found')
-    try:r['chain']=read_job(job_id)
-    except Exception as e:r['chainError']=str(e)
+async def job(job_id: int):
+    r = get(job_id)
+    if not r:
+        raise HTTPException(404, 'Execution not found')
+    try:
+        r['chain'] = read_job(job_id)
+    except Exception as e:
+        r['chainError'] = str(e)
     return r
+
 @app.get('/erc8183/job/{job_id}/response')
-async def deliverable(job_id:int):
-    r=get(job_id)
-    if not r or not r.get('result_json'):raise HTTPException(404,'Deliverable not found')
-    try:return JSONResponse(content=json.loads(r['result_json']))
-    except Exception:return JSONResponse(content={'result':r['result_json']})
+async def deliverable(job_id: int):
+    r = get(job_id)
+    if not r or not r.get('result_json'):
+        raise HTTPException(404, 'Deliverable not found')
+    try:
+        return JSONResponse(content=json.loads(r['result_json']))
+    except Exception:
+        return JSONResponse(content={'result': r['result_json']})

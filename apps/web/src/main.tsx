@@ -34,25 +34,29 @@ function App() {
   const pub = useMemo(() => createPublicClient({ chain: bscTestnet, transport: http(cfg?.rpc) }), [cfg?.rpc]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-
-    fetch(`${API}/api/config`, { signal: controller.signal })
-      .then(async r => { if (!r.ok) throw Error(await r.text()); return r.json() })
-      .then(setCfg)
-      .catch(e => {
-        if (e.name !== 'AbortError') setError(e.message);
-        else setError('Backend is starting up — please wait a moment and refresh.');
-      });
-
-    fetch(`${API}/api/agents?limit=100`, { signal: controller.signal })
-      .then(async r => { if (!r.ok) throw Error(await r.text()); return r.json() })
-      .then(x => setAgents(x.agents || []))
-      .catch(e => {
-        if (e.name !== 'AbortError') setError(e.message);
-      });
-
-    return () => { clearTimeout(timeout); controller.abort(); };
+    let cancelled = false;
+    const load = async () => {
+      for (let i = 0; i < 10; i++) {
+        try {
+          const [cfgRes, agentsRes] = await Promise.all([
+            fetch(`${API}/api/config`),
+            fetch(`${API}/api/agents?limit=100`)
+          ]);
+          if (!cfgRes.ok) throw Error(await cfgRes.text());
+          if (cancelled) return;
+          setCfg(await cfgRes.json());
+          const ag = await agentsRes.json();
+          setAgents(ag.agents || []);
+          return;
+        } catch(e) {
+          if (cancelled) return;
+          if (i < 9) await new Promise(r => setTimeout(r, 3000));
+          else setError('Backend unavailable — please refresh.');
+        }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   // Poll job status – only when jobId is set

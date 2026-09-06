@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import threading
+import time
+import urllib.request
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,7 +19,22 @@ logger = logging.getLogger(__name__)
 
 network = BSC_NETWORKS[settings.network]
 app = FastAPI(title='AgentForge API', version='2.3.0')
-app.add_middleware(CORSMiddleware, allow_origins=list(settings.cors_origins), allow_credentials=True, allow_methods=['*'], allow_headers=['*'])
+
+# ---- CORS FIX ----
+allowed_origins = list(settings.cors_origins)
+vercel_url = "https://agentforge-v2-mu.vercel.app"
+if vercel_url not in allowed_origins:
+    allowed_origins.append(vercel_url)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# -----------------
+
 worker_task = None
 
 class Hire(BaseModel):
@@ -37,6 +55,18 @@ class TxRecord(BaseModel):
     fund_tx: str | None = None
     submit_tx: str | None = None
     settle_tx: str | None = None
+
+# --- Keep Render awake ---
+def _keep_alive():
+    while True:
+        time.sleep(240)
+        try:
+            urllib.request.urlopen('http://localhost:10000/health', timeout=5)
+        except Exception:
+            pass
+
+threading.Thread(target=_keep_alive, daemon=True).start()
+# -------------------------
 
 @app.on_event('startup')
 async def startup():
@@ -68,12 +98,12 @@ async def health():
 async def config():
     return {**network, 'network': settings.network}
 
-# ----- TRACK METADATA (generic endpoint) -----
+# ----- TRACK METADATA -----
 TRACK_META = {
     'rebalancing': {'name': 'Rebalancing', 'description': 'Automated portfolio rebalancing agents'},
     'grid-trading': {'name': 'Grid Trading', 'description': 'Grid strategy and DCA agents'},
     'yield-optimisation': {'name': 'Yield Optimisation', 'description': 'APR/APY yield farming agents'},
-    'yield-optimization': {'name': 'Yield Optimisation', 'description': 'APR/APY yield farming agents'},  # alias
+    'yield-optimization': {'name': 'Yield Optimisation', 'description': 'APR/APY yield farming agents'},
     'health-factor-monitoring': {'name': 'Health Factor Monitoring', 'description': 'Liquidation risk monitoring agents'},
 }
 
@@ -83,7 +113,7 @@ async def track_metadata(track: str):
         raise HTTPException(404, f'Unknown track: {track}')
     return TRACK_META[track]
 
-# ----- MOCK AGENT EXECUTION ENDPOINTS (for testing) -----
+# ----- MOCK AGENT EXECUTION ENDPOINTS -----
 @app.post('/agent/rebalancing')
 async def agent_rebalancing(payload: dict):
     return {"result": f"Rebalancing executed for task: {payload.get('task', 'no task')}"}
@@ -100,7 +130,7 @@ async def agent_yield_optimisation(payload: dict):
 async def agent_health_factor_monitoring(payload: dict):
     return {"result": f"Health factor monitoring executed for task: {payload.get('task', 'no task')}"}
 
-# ----- METADATA ENDPOINTS (specific, for agent registration) -----
+# ----- METADATA ENDPOINTS (specific) -----
 @app.get('/api/metadata/rebalancing')
 async def rebalancing_metadata():
     return {

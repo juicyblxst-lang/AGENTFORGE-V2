@@ -91,7 +91,6 @@ async def process_job(job_id: int):
     if not claim_execution(job_id):
         return
     try:
-        # Resolve agent from hardcoded list first to avoid chain scan
         from .main import HARDCODED_AGENTS
         agent = next((a for a in HARDCODED_AGENTS if a['agentId'] == record['agent_id']), None)
         if not agent:
@@ -122,8 +121,6 @@ async def reconcile_once():
     if not provider_ready():
         return
     _, client = provider_client()
-
-    # 1. Process jobs the DB already knows about
     for row in list_all(limit=200):
         jid = int(row['job_id'])
         if row.get('status') in ('completed', 'error'):
@@ -149,8 +146,6 @@ async def reconcile_once():
             existing = get(jid)
             if existing and existing.get('status') not in ('submitted', 'completed'):
                 upsert(jid, status='error', error=str(e))
-
-    # 2. Scan recent chain jobs to catch new ones not yet in DB
     try:
         counter = int(client.commerce.job_counter())
         for jid in range(max(1, counter - 5), counter + 1):
@@ -164,7 +159,6 @@ async def reconcile_once():
         pass
 
 async def worker():
-    # 🔴 CRITICAL: Wait 15 seconds for Render health check and port binding
     await asyncio.sleep(15)
     while True:
         try:

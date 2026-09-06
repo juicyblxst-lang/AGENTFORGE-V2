@@ -245,13 +245,10 @@ async def budget(job_id: int):
         raise HTTPException(400, 'Provider is not configured: please set PROVIDER_PRIVATE_KEY and PROVIDER_ADDRESS in environment variables.')
     try:
         tx = await quote(job_id, settings.service_price_units)
-        # wait a bit for chain update
+        # Wait a bit for chain update
         await asyncio.sleep(2)
         state = read_job(job_id)
-        if state['statusName'] != 'open' or state['budget'] <= 0:
-            # If it's already funded, we can still return success? But we expect open.
-            # We'll just return the tx and let the frontend check chain.
-            pass
+        # Even if state is not open, we still store budget_tx; frontend can check chain
         upsert(job_id, status='budgeted', budget_tx=tx)
         return {'ok': True, 'txHash': tx, 'onChain': state}
     except Exception as e:

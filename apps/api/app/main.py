@@ -30,6 +30,18 @@ async def health():
     return {'ok':True,'network':settings.network,'chainId':network['chainId'],'providerConfigured':bool(settings.provider_private_key and settings.provider_address and settings.provider_agent_base_url),'contracts':{'identityRegistry':network['identityRegistry'],'commerce':network['commerce'],'router':network['router'],'policy':network['policy']}}
 @app.get('/api/config')
 async def config(): return {**network,'network':settings.network}
+@app.get('/api/metadata/rebalancing')
+async def rebalancing_metadata():
+    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Rebalancing Agent','description':'ERC-8004 agent metadata for the AgentForge Rebalancing category.','category':'Rebalancing','active':True}
+@app.get('/api/metadata/grid-trading')
+async def grid_trading_metadata():
+    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Grid Trading Agent','description':'ERC-8004 agent metadata for the AgentForge Grid Trading category.','category':'Grid Trading','active':True}
+@app.get('/api/metadata/yield-optimisation')
+async def yield_optimisation_metadata():
+    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Yield Optimisation Agent','description':'ERC-8004 agent metadata for the AgentForge Yield Optimisation category.','category':'Yield Optimisation','active':True}
+@app.get('/api/metadata/health-factor-monitoring')
+async def health_factor_monitoring_metadata():
+    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Health Factor Monitoring Agent','description':'ERC-8004 agent metadata for the AgentForge Health Factor Monitoring category.','category':'Health Factor Monitoring','active':True}
 @app.get('/api/agents')
 async def agents(limit:int=100):
     try:return {'agents':await discover(limit)}

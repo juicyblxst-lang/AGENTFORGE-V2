@@ -2,6 +2,8 @@ import asyncio
 import json
 import time
 import httpx
+from web3 import Web3
+from eth_account import Account
 from .config import settings, BSC_NETWORKS
 from .db import upsert, get, claim_execution
 from .discovery import get_agent
@@ -22,6 +24,9 @@ async def quote(job_id: int, amount_units: int):
     if not provider_ready():
         raise RuntimeError('Provider requires PROVIDER_PRIVATE_KEY, PROVIDER_ADDRESS and PROVIDER_AGENT_BASE_URL')
 
+    # Use a fresh raw Web3 transaction for setBudget. The SDK's local executor
+    # can race its own nonce cache on a long-lived provider wallet; using the
+    # pending nonce from the chain makes this boundary deterministic.
     wallet, client = provider_client()
     job = client.get_job(job_id)
     if str(job.provider).lower() != str(settings.provider_address).lower():
@@ -30,31 +35,49 @@ async def quote(job_id: int, amount_units: int):
         raise RuntimeError(f'Job not open (status={int(job.status)})')
 
     amount = amount_units * (10 ** client.token_decimals())
-    # The current SDK facade has a stale two-argument set_budget wrapper while
-    # CommerceClient exposes the deployed three-argument Solidity shape
-    # (jobId, amount, optParams). Call the low-level client explicitly so the
-    # provider uses the canonical on-chain function rather than relying on the
-    # stale facade.
-    try:
-        result = client.commerce.set_budget(job_id, amount, b'')
-    except Exception as exc:
-        raise RuntimeError(f'setBudget transaction construction failed: {exc}') from exc
-    if not result.get('success', False):
-        error = result.get('error') or result.get('message') or repr(result)
-        raise RuntimeError(f'setBudget transaction failed: {error}')
-    tx = result.get('txHash') or result.get('tx_hash') or result.get('transactionHash')
-    if not tx:
-        raise RuntimeError(f'setBudget returned no transaction hash: {result}')
-    # Do not trust the SDK response alone. Verify the receipt and resulting
-    # authoritative Commerce state before reporting success to the browser.
     w3 = client.w3
-    receipt = w3.eth.wait_for_transaction_receipt(tx, timeout=120)
+    account = Account.from_key(settings.provider_private_key)
+    configured = Web3.to_checksum_address(settings.provider_address)
+    if account.address.lower() != configured.lower():
+        raise RuntimeError(f'Provider private key does not match PROVIDER_ADDRESS: key={account.address}, configured={configured}')
+
+    commerce = w3.eth.contract(address=Web3.to_checksum_address(network['commerce']), abi=[
+        {
+            'type': 'function', 'name': 'setBudget', 'stateMutability': 'nonpayable',
+            'inputs': [
+                {'name': 'jobId', 'type': 'uint256'},
+                {'name': 'amount', 'type': 'uint256'},
+                {'name': 'optParams', 'type': 'bytes'},
+            ], 'outputs': []
+        },
+    ])
+    try:
+        nonce = w3.eth.get_transaction_count(account.address, 'pending')
+        gas_price = w3.eth.gas_price
+        tx = commerce.functions.setBudget(job_id, amount, b'').build_transaction({
+            'from': account.address,
+            'nonce': nonce,
+            'chainId': network['chainId'],
+            'gas': 300_000,
+            'gasPrice': gas_price,
+        })
+        try:
+            tx['gas'] = w3.eth.estimate_gas(tx)
+        except Exception as exc:
+            raise RuntimeError(f'setBudget gas estimation failed: {exc}') from exc
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    except Exception as exc:
+        raise RuntimeError(f'setBudget transaction submission failed: {exc}') from exc
+
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    tx_hex = tx_hash.hex()
     if int(receipt.status) != 1:
-        raise RuntimeError(f'setBudget transaction reverted: {tx}')
+        raise RuntimeError(f'setBudget transaction reverted: {tx_hex}')
     state = read_job(job_id)
     if state['statusName'] != 'open' or int(state['budget']) != amount:
         raise RuntimeError(f'setBudget receipt succeeded but on-chain state is invalid: status={state["statusName"]}, budget={state["budget"]}, expected={amount}')
-    return tx
+    return tx_hex
 
 async def execute_external(agent, task):
     endpoints = agent.get('endpoints', [])

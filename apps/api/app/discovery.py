@@ -14,9 +14,9 @@ CATEGORIES = {
     'health-factor': ['health factor','healthfactor','liquidation','lending health','liquidation monitor','lending guardian','borrow health','collateral health','liquidation risk','venus'],
 }
 IDENTITY_ABI=[
-    {'type':'function','name':'ownerOf','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'type':'address'}]},
-    {'type':'function','name':'getAgentWallet','stateMutability':'view','inputs':[{'name':'agentId','type':'uint256'}],'outputs':[{'type':'address'}]},
-    {'type':'function','name':'tokenURI','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'type':'string'}]},
+    {'type':'function','name':'ownerOf','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'name':'owner','type':'address'}]},
+    {'type':'function','name':'getAgentWallet','stateMutability':'view','inputs':[{'name':'agentId','type':'uint256'}],'outputs':[{'name':'wallet','type':'address'}]},
+    {'type':'function','name':'tokenURI','stateMutability':'view','inputs':[{'name':'tokenId','type':'uint256'}],'outputs':[{'name':'','type':'string'}]},
     {'type':'event','name':'Registered','anonymous':False,'inputs':[{'indexed':True,'name':'agentId','type':'uint256'},{'indexed':False,'name':'agentURI','type':'string'},{'indexed':True,'name':'owner','type':'address'}]},
 ]
 
@@ -103,8 +103,7 @@ async def _get(path,params=None):
 
 def _candidate_ids(page):
     root=page.get('data',page) if isinstance(page,dict) else page
-    if isinstance(root,dict):
-        root=root.get('items',root.get('agents',root.get('results',root.get('data',[]))))
+    if isinstance(root,dict): root=root.get('items',root.get('agents',root.get('results',root.get('data',[]))))
     ids=[]
     for item in root or []:
         if not isinstance(item,dict): continue
@@ -115,10 +114,8 @@ def _candidate_ids(page):
     return list(dict.fromkeys(ids))
 
 async def _discover_from_scan(limit):
-    params={'chain_id':network_config()['chainId'],'is_testnet':settings.network=='bsc-testnet','limit':limit,'offset':0}
+    params={'chain_id':network_config()['chainId'],'is_testnet':False,'limit':limit,'offset':0}
     page=await _get('/agents',params)
-    # Prefer resolving every candidate through the detail endpoint. This keeps
-    # the UI schema stable even when the list endpoint returns abbreviated rows.
     candidates=_candidate_ids(page)
     result=[]
     for aid in candidates[:limit]:
@@ -128,8 +125,6 @@ async def _discover_from_scan(limit):
         except Exception:
             continue
     if result: return list({a['key']:a for a in result}.values())[:limit]
-    # Some 8004scan responses contain complete records but omit registration
-    # details in the list envelope. Keep normalize as a second path.
     normalized=normalize(page,verify=True)
     return list({a['key']:a for a in normalized}.values())[:limit]
 
@@ -140,13 +135,14 @@ async def _discover_from_chain(limit=100):
     address=Web3.to_checksum_address(network_config()['identityRegistry']); contract=w3.eth.contract(address=address,abi=IDENTITY_ABI); latest=w3.eth.block_number
     start=88_179_226 if settings.network=='bsc-testnet' else max(0,latest-1_000_000)
     if start>latest: start=max(0,latest-1_000_000)
-    chunk=5_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
+    chunk=100_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
     for frm in range(start,latest+1,chunk):
         to=min(frm+chunk-1,latest)
-        try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':frm,'toBlock':to}))
+        try:
+            events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':frm,'toBlock':to}))
         except Exception:
-            for s in range(frm,to+1,1_000):
-                try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+999,to)}))
+            for s in range(frm,to+1,10_000):
+                try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+9_999,to)}))
                 except Exception: continue
     latest_by_id={}
     for ev in events:
@@ -168,24 +164,13 @@ async def _discover_from_chain(limit=100):
 
 async def discover(limit=100):
     limit=min(max(limit,1),100)
-    last_error=None
-    for attempt in range(3):
-        try:
-            result=await _discover_from_scan(limit)
-            if result: return result
-        except Exception as exc:
-            last_error=exc
     if settings.network=='bsc-testnet':
-        try: return await _discover_from_chain(limit)
-        except Exception as exc:
-            if last_error: raise RuntimeError(f'8004scan discovery failed: {last_error}; on-chain fallback failed: {exc}')
-            raise
-    if last_error: raise last_error
-    return []
+        return await _discover_from_chain(limit)
+    return await _discover_from_scan(limit)
 
 async def get_agent(agent_id):
     try:
-        data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':settings.network=='bsc-testnet'})
+        data=await _get(f'/agents/{network_config()["chainId"]}/{int(agent_id)}',{'is_testnet':False})
         found=normalize({'data':[data]},verify=True)
         if found: return found[0]
     except Exception:

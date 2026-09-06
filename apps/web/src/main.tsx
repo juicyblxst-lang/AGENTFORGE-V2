@@ -6,9 +6,9 @@ import './styles.css';
 
 type Agent = { key: string; agentId: string; agentRegistry: string; name: string; description: string; owner?: string; agentWallet?: string; identityVerified?: boolean; categories: string[]; skills: any[]; endpoints: { type: string; url: string }[]; reputation: any };
 type RuntimeConfig = { chainId: number; identityRegistry: string; commerce: string; router: string; policy: string; rpc: string; network: string };
-type JobRecord = { status: string; result?: any; chain?: { statusName: string; budget: number; submittedAt: number; deliverable: string; provider: string; client: string }; error?: string; create_tx?: string; register_tx?: string; budget_tx?: string; approval_tx?: string; fund_tx?: string; submit_tx?: string; settle_tx?: string };
+type JobRecord = { status: string; result?: any; chain?: { statusName: string; budget: number; submitted_at: number; expired_at: number; deliverable: string; provider: string; client: string }; error?: string; create_tx?: string; register_tx?: string; budget_tx?: string; approval_tx?: string; fund_tx?: string; submit_tx?: string; settle_tx?: string };
 
-const API = 'https://agentforge-v2-api.onrender.com';
+const API = import.meta.env.VITE_API_URL ?? 'https://agentforge-v2-api.onrender.com';
 const commerceAbi = [
   { type: 'function', name: 'createJob', stateMutability: 'nonpayable', inputs: [{ name: 'provider', type: 'address' }, { name: 'evaluator', type: 'address' }, { name: 'expiredAt', type: 'uint256' }, { name: 'description', type: 'string' }, { name: 'hook', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'fund', stateMutability: 'nonpayable', inputs: [{ name: 'jobId', type: 'uint256' }, { name: 'expectedBudget', type: 'uint256' }, { name: 'optParams', type: 'bytes' }], outputs: [] },
@@ -34,14 +34,25 @@ function App() {
   const pub = useMemo(() => createPublicClient({ chain: bscTestnet, transport: http(cfg?.rpc) }), [cfg?.rpc]);
 
   useEffect(() => {
-    fetch(`${API}/api/config`)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    fetch(`${API}/api/config`, { signal: controller.signal })
       .then(async r => { if (!r.ok) throw Error(await r.text()); return r.json() })
       .then(setCfg)
-      .catch(e => setError(e.message));
-    fetch(`${API}/api/agents?limit=100`)
+      .catch(e => {
+        if (e.name !== 'AbortError') setError(e.message);
+        else setError('Backend is starting up — please wait a moment and refresh.');
+      });
+
+    fetch(`${API}/api/agents?limit=100`, { signal: controller.signal })
       .then(async r => { if (!r.ok) throw Error(await r.text()); return r.json() })
       .then(x => setAgents(x.agents || []))
-      .catch(e => setError(e.message));
+      .catch(e => {
+        if (e.name !== 'AbortError') setError(e.message);
+      });
+
+    return () => { clearTimeout(timeout); controller.abort(); };
   }, []);
 
   // Poll job status – only when jobId is set
@@ -55,10 +66,8 @@ function App() {
         if (r.ok && active) setRecord(await r.json());
       } catch (e) { /* ignore */ }
     };
-    // Immediate fetch
     fetchJob();
-    // Set interval
-    const interval = setInterval(fetchJob, 5000);  // 5 seconds
+    const interval = setInterval(fetchJob, 5000);
     return () => {
       active = false;
       clearInterval(interval);
@@ -197,7 +206,9 @@ function App() {
       <header>
         <div className="brand"><span>AGENT</span>FORGE</div>
         <div className="network">BSC {cfg?.network === 'bsc-mainnet' ? 'MAINNET' : 'TESTNET'} <i /></div>
-        <button onClick={connect} className="wallet">{account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}</button>
+        <button onClick={connect} className="wallet" disabled={!cfg}>
+          {!cfg ? 'Loading…' : account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}
+        </button>
       </header>
       <main>
         <section className="hero">

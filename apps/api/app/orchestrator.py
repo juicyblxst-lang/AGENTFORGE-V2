@@ -11,7 +11,7 @@ from .chain_dynamic import read_job, dispute_window
 network = BSC_NETWORKS[settings.network]
 
 COMMERCE_ABI = [
-    {'type':'function','name':'setBudget','stateMutability':'nonpayable','inputs':[{'name':'jobId','type':'uint256'},{'name':'budget','type':'uint256'}],'outputs':[]},
+    {'type':'function','name':'setBudget','stateMutability':'nonpayable','inputs':[{'name':'jobId','type':'uint256'},{'name':'budget','type':'uint256'},{'name':'optParams','type':'bytes'}],'outputs':[]},
     {'type':'function','name':'getJob','stateMutability':'view','inputs':[{'name':'jobId','type':'uint256'}],'outputs':[{'type':'tuple','components':[{'name':'id','type':'uint256'},{'name':'client','type':'address'},{'name':'provider','type':'address'},{'name':'evaluator','type':'address'},{'name':'description','type':'string'},{'name':'budget','type':'uint256'},{'name':'expiredAt','type':'uint256'},{'name':'status','type':'uint8'},{'name':'hook','type':'address'},{'name':'submittedAt','type':'uint256'},{'name':'deliverable','type':'bytes32'}]}]},
     {'type':'function','name':'paymentToken','stateMutability':'view','inputs':[],'outputs':[{'type':'address'}]},
     {'type':'function','name':'settle','stateMutability':'nonpayable','inputs':[{'name':'jobId','type':'uint256'}],'outputs':[]},
@@ -58,7 +58,6 @@ async def quote(job_id: int, amount_units: int):
         abi=COMMERCE_ABI
     )
 
-    # Get token decimals
     token_address = commerce.functions.paymentToken().call()
     erc20 = w3.eth.contract(
         address=Web3.to_checksum_address(token_address),
@@ -69,7 +68,7 @@ async def quote(job_id: int, amount_units: int):
 
     tx_hash = send_tx(
         w3,
-        commerce.functions.setBudget(job_id, amount),
+        commerce.functions.setBudget(job_id, amount, b''),
         settings.provider_address,
         settings.provider_private_key
     )

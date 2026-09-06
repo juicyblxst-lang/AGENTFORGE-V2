@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -115,13 +116,38 @@ async def chain_job(job_id: int):
     try: return read_job(job_id)
     except Exception as e: raise HTTPException(502,f'On-chain read failed: {e}')
 
+def _recover_from_chain(job_id: int, chain: dict):
+    description=str(chain.get('description') or '')
+    match=re.match(r'^AgentForge:(.+):(\d+)$',description)
+    fields={
+        'status': str(chain.get('statusName') or 'onchain'),
+        'client': str(chain.get('client') or ''),
+    }
+    if match:
+        fields['agent_registry']=match.group(1)
+        fields['agent_id']=match.group(2)
+    upsert(job_id,**fields)
+    recovered=get(job_id) or {'job_id':str(job_id),**fields}
+    recovered['chain']=chain
+    recovered['recoveredFromChain']=True
+    return recovered
+
 @app.get('/api/jobs/{job_id}')
 async def job(job_id: int):
     r=get(job_id)
-    if not r: raise HTTPException(404,'Execution not found')
-    try: r['chain']=read_job(job_id)
-    except Exception as e: r['chainError']=str(e)
-    return r
+    if r:
+        try: r['chain']=read_job(job_id)
+        except Exception as e: r['chainError']=str(e)
+        return r
+    try:
+        chain=read_job(job_id)
+    except Exception as e:
+        raise HTTPException(404,'Execution not found and no readable on-chain job exists')
+    try:
+        return _recover_from_chain(job_id,chain)
+    except Exception as e:
+        logger.exception(f'Job recovery failed for {job_id}')
+        raise HTTPException(500,f'On-chain job exists but persistence recovery failed: {e}')
 
 @app.get('/api/jobs')
 async def list_jobs(limit: int = 50):

@@ -56,42 +56,6 @@ async def health():
 async def config():
     return {**network, 'network': settings.network}
 
-@app.post('/agent/rebalancing')
-async def agent_rebalancing(payload: dict):
-    task=str(payload.get('task','')).strip()
-    return {'agent':'rebalancing','accepted':bool(task),'task':task,'analysis':{'mode':'range-rebalancing','status':'ready','recommendation':'Review current concentrated-liquidity range and rebalance only within configured risk limits.'}}
-
-@app.post('/agent/grid-trading')
-async def agent_grid_trading(payload: dict):
-    task=str(payload.get('task','')).strip()
-    return {'agent':'grid-trading','accepted':bool(task),'task':task,'analysis':{'mode':'grid-strategy','status':'ready','recommendation':'Compute grid levels from the requested market constraints before placing any orders.'}}
-
-@app.post('/agent/yield-optimisation')
-async def agent_yield_optimisation(payload: dict):
-    task=str(payload.get('task','')).strip()
-    return {'agent':'yield-optimisation','accepted':bool(task),'task':task,'analysis':{'mode':'yield-optimization','status':'ready','recommendation':'Compare risk-adjusted yield venues and return an allocation recommendation without moving funds.'}}
-
-@app.post('/agent/health-factor-monitoring')
-async def agent_health_factor_monitoring(payload: dict):
-    task=str(payload.get('task','')).strip()
-    return {'agent':'health-factor-monitoring','accepted':bool(task),'task':task,'analysis':{'mode':'health-factor','status':'ready','recommendation':'Evaluate collateral health and liquidation distance before any deleveraging action.'}}
-
-@app.get('/api/metadata/rebalancing')
-async def rebalancing_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Rebalancing Agent','description':'ERC-8004 agent metadata for the AgentForge Rebalancing category.','category':'Rebalancing','active':True,'endpoints':[{'type':'http','url':f'https://agentforge-v2-api.onrender.com/agent/rebalancing'}]}
-
-@app.get('/api/metadata/grid-trading')
-async def grid_trading_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Grid Trading Agent','description':'ERC-8004 agent metadata for the AgentForge Grid Trading category.','category':'Grid Trading','active':True,'endpoints':[{'type':'http','url':f'https://agentforge-v2-api.onrender.com/agent/grid-trading'}]}
-
-@app.get('/api/metadata/yield-optimisation')
-async def yield_optimisation_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Yield Optimisation Agent','description':'ERC-8004 agent metadata for the AgentForge Yield Optimisation category.','category':'Yield Optimisation','active':True,'endpoints':[{'type':'http','url':f'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'}]}
-
-@app.get('/api/metadata/health-factor-monitoring')
-async def health_factor_monitoring_metadata():
-    return {'type':'https://eips.ethereum.org/EIPS/eip-8004#registration-v1','name':'AgentForge Health Factor Monitoring Agent','description':'ERC-8004 agent metadata for the AgentForge Health Factor Monitoring category.','category':'Health Factor Monitoring','active':True,'endpoints':[{'type':'http','url':f'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'}]}
-
 @app.get('/api/agents')
 async def agents(limit: int = 100):
     try:
@@ -115,7 +79,7 @@ async def prepare(h: Hire):
         if not agent.get('identityVerified'): raise ValueError('Agent identity is not verified on the configured ERC-8004 registry')
         if not agent.get('endpoints'): raise ValueError('Agent has no executable endpoint')
         if not settings.provider_address: raise ValueError('Provider is not configured: PROVIDER_ADDRESS is required')
-        return {'agent':agent,'provider':settings.provider_address,'evaluator':network['router'],'hook':network['router'],'policy':network['policy'],'expiresInSeconds':7200}
+        return {'agent':agent,'provider':settings.provider_address,'evaluator':network['router'],'hook':network['router'],'policy':network['policy'],'expiresInSeconds':2592000}
     except Exception as e:
         raise HTTPException(400,str(e))
 

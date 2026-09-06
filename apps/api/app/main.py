@@ -177,11 +177,16 @@ async def budget(job_id: int):
     if not provider_ready():
         raise HTTPException(400, 'Provider is not configured: please set PROVIDER_PRIVATE_KEY and PROVIDER_ADDRESS in environment variables.')
     try:
-        # quote() uses synchronous Web3 RPC calls, so it must not run on FastAPI's event loop.
         tx = await asyncio.to_thread(quote_sync, job_id, settings.service_price_units)
         state = await asyncio.to_thread(read_job, job_id)
+        if str(state['provider']).lower() != str(settings.provider_address).lower():
+            raise HTTPException(403, 'Job provider does not match AgentForge provider')
+        if state['statusName'] != 'open':
+            raise HTTPException(409, f'Job is not Open (current status: {state["statusName"]})')
         upsert(job_id, status='budgeted', budget_tx=tx)
         return {'ok': True, 'txHash': tx, 'onChain': state}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f'Budget failed for job {job_id}')
         raise HTTPException(400, str(e))
@@ -232,7 +237,5 @@ async def deliverable(job_id: int):
     except Exception:
         return JSONResponse(content={'result': r['result_json']})
 
-# quote() is async for historical reasons, but its implementation is entirely synchronous.
-# Keep a synchronous wrapper for thread offloading so the API event loop never blocks on RPC/tx confirmation.
 def quote_sync(job_id: int, amount_units: int):
     return asyncio.run(quote(job_id, amount_units))

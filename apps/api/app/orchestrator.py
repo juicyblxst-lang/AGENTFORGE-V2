@@ -22,11 +22,11 @@ async def quote(job_id: int, amount_units: int):
     if not provider_ready():
         raise RuntimeError('Provider not ready')
     wallet, client = provider_client()
-    job = client.get_job(job_id)
-    # Check status – must be open (0)
-    if job['status'] != 0:
-        raise RuntimeError(f"Job not open (status={job['status']})")
-    # Provider can also set budget; no need to match for setBudget
+    job = client.get_job(job_id)   # dataclass
+    # Must be open (status == 0)
+    if job.status != 0:
+        raise RuntimeError(f"Job not open (status={job.status})")
+    # Provider can set budget; no identity check needed for setBudget
     amount = amount_units * (10 ** client.token_decimals())
     result = client.set_budget(job_id, amount)
     if not result.get('success', False):
@@ -36,8 +36,6 @@ async def quote(job_id: int, amount_units: int):
         raise RuntimeError('setBudget returned no tx hash')
     return tx
 
-# execute_external, process_job, reconcile_once, worker remain unchanged
-# (they use read_job which now returns snake_case)
 async def execute_external(agent, task):
     endpoints = agent.get('endpoints', [])
     if not endpoints:
@@ -86,8 +84,8 @@ async def process_job(job_id: int):
     from bnbagent.erc8183 import ERC8183JobOps
     from bnbagent.storage import LocalStorageProvider
     wallet, client = provider_client()
-    job = client.get_job(job_id)
-    if str(job['provider']).lower() != str(settings.provider_address).lower() or job['status'] != 1:
+    job = client.get_job(job_id)   # dataclass
+    if str(job.provider).lower() != str(settings.provider_address).lower() or job.status != 1:
         return
     record = get(job_id)
     if not record:
@@ -100,7 +98,7 @@ async def process_job(job_id: int):
             raise RuntimeError('Agent not verified at execution time')
         if not agent.get('endpoints'):
             raise RuntimeError('No executable endpoint at execution time')
-        result = await execute_external(agent, job.get('description', f'Execute job {job_id}'))
+        result = await execute_external(agent, job.description or f'Execute job {job_id}')
         deliverable = json.dumps(result, ensure_ascii=False, separators=(',', ':'))
         if not deliverable or deliverable == '{}':
             raise RuntimeError('Execution produced no valid deliverable')

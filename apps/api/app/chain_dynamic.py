@@ -9,24 +9,23 @@ def _get_sdk_client():
 
 def read_job(job_id: int) -> dict:
     client = _get_sdk_client()
-    job = client.get_job(job_id)  # returns a dict with snake_case keys
+    job = client.get_job(job_id)   # returns a dataclass with snake_case attributes
     status_map = {0: 'open', 1: 'funded', 2: 'submitted', 3: 'completed', 4: 'rejected', 5: 'expired'}
     return {
-        'id': job['jobId'],
-        'client': job['client'],
-        'provider': job['provider'],
-        'evaluator': job['evaluator'],
-        'description': job.get('description', ''),
-        'budget': job['budget'],
-        'expired_at': job['expired_at'],   # ✅ correct snake_case
-        'status': job['status'],
-        'statusName': status_map.get(job['status'], 'unknown'),
-        'hook': job.get('hook', '0x0000000000000000000000000000000000000000'),
-        'submitted_at': job.get('submitted_at', 0),
-        'deliverable': job.get('deliverable', '0x0000000000000000000000000000000000000000000000000000000000000000')
+        'id': job.id,
+        'client': job.client,
+        'provider': job.provider,
+        'evaluator': job.evaluator,
+        'description': job.description,
+        'budget': job.budget,
+        'expired_at': job.expired_at,       # ✅ snake_case
+        'status': job.status,
+        'statusName': status_map.get(job.status, 'unknown'),
+        'hook': job.hook,
+        'submitted_at': job.submitted_at,   # ✅ snake_case
+        'deliverable': job.deliverable.hex() if isinstance(job.deliverable, bytes) else str(job.deliverable)
     }
 
-# Keep dispute_window and verify_receipt as before using web3
 def dispute_window() -> int:
     from web3 import Web3
     w3 = Web3(Web3.HTTPProvider(settings.rpc_url, request_kwargs={'timeout': 15}))

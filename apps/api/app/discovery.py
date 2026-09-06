@@ -108,12 +108,15 @@ async def _discover_from_chain(limit=100):
     address=Web3.to_checksum_address(network_config()['identityRegistry']); contract=w3.eth.contract(address=address,abi=IDENTITY_ABI); latest=w3.eth.block_number
     start=88_179_226 if settings.network=='bsc-testnet' else max(0,latest-1_000_000)
     if start>latest: start=max(0,latest-1_000_000)
-    chunk=100_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
+    chunk=5_000; events=[]; topic=Web3.keccak(text='Registered(uint256,string,address)').hex()
     for frm in range(start,latest+1,chunk):
         to=min(frm+chunk-1,latest)
         try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':frm,'toBlock':to}))
         except Exception:
-            for s in range(frm,to+1,10_000): events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+9_999,to)}))
+            for s in range(frm,to+1,1_000):
+                try: events.extend(w3.eth.get_logs({'address':address,'topics':[topic],'fromBlock':s,'toBlock':min(s+999,to)}))
+                except Exception:
+                    continue
     latest_by_id={}
     for ev in events:
         try:

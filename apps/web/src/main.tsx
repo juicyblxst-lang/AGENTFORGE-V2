@@ -9,6 +9,7 @@ type RuntimeConfig = { chainId: number; identityRegistry: string; commerce: stri
 type JobRecord = { status: string; result?: any; chain?: { statusName: string; budget: number; submitted_at: number; expired_at: number; deliverable: string; provider: string; client: string }; error?: string; create_tx?: string; register_tx?: string; budget_tx?: string; approval_tx?: string; fund_tx?: string; submit_tx?: string; settle_tx?: string };
 
 const API = import.meta.env.VITE_API_URL ?? 'https://agentforge-v2-api.onrender.com';
+
 const commerceAbi = [
   { type: 'function', name: 'createJob', stateMutability: 'nonpayable', inputs: [{ name: 'provider', type: 'address' }, { name: 'evaluator', type: 'address' }, { name: 'expiredAt', type: 'uint256' }, { name: 'description', type: 'string' }, { name: 'hook', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'fund', stateMutability: 'nonpayable', inputs: [{ name: 'jobId', type: 'uint256' }, { name: 'expectedBudget', type: 'uint256' }, { name: 'optParams', type: 'bytes' }], outputs: [] },
@@ -16,11 +17,23 @@ const commerceAbi = [
   { type: 'function', name: 'paymentToken', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
   { type: 'event', name: 'JobCreated', inputs: [{ indexed: true, name: 'jobId', type: 'uint256' }, { indexed: true, name: 'client', type: 'address' }, { indexed: true, name: 'provider', type: 'address' }, { indexed: false, name: 'evaluator', type: 'address' }, { indexed: false, name: 'expiredAt', type: 'uint256' }, { indexed: false, name: 'hook', type: 'address' }] }
 ] as const;
+
 const routerAbi = [{ type: 'function', name: 'registerJob', stateMutability: 'nonpayable', inputs: [{ name: 'jobId', type: 'uint256' }, { name: 'policy', type: 'address' }], outputs: [] }] as const;
 const erc20Abi = [{ type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }] }, { type: 'function', name: 'decimals', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] }] as const;
 
+// Fallback config so the UI renders immediately
+const FALLBACK_CFG: RuntimeConfig = {
+  chainId: 97,
+  identityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
+  commerce: '0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de',
+  router: '0xd7d36d66d2f1b608a0f943f722d27e3744f66f25',
+  policy: '0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6',
+  rpc: 'https://data-seed-prebsc-1-s1.binance.org:8545',
+  network: 'bsc-testnet'
+};
+
 function App() {
-  const [cfg, setCfg] = useState<RuntimeConfig>();
+  const [cfg, setCfg] = useState<RuntimeConfig>(FALLBACK_CFG);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [cat, setCat] = useState('all');
   const [query, setQuery] = useState('');
@@ -30,6 +43,7 @@ function App() {
   const [jobId, setJobId] = useState(() => localStorage.getItem('agentforge:job') || '');
   const [record, setRecord] = useState<JobRecord>();
   const [error, setError] = useState('');
+  const [backendStatus, setBackendStatus] = useState<'loading'|'ok'|'error'>('loading');
 
   const pub = useMemo(() => createPublicClient({ chain: bscTestnet, transport: http(cfg?.rpc) }), [cfg?.rpc]);
 
@@ -44,14 +58,16 @@ function App() {
           ]);
           if (!cfgRes.ok) throw Error(await cfgRes.text());
           if (cancelled) return;
-          setCfg(await cfgRes.json());
+          const cfgData = await cfgRes.json();
+          setCfg(cfgData);
           const ag = await agentsRes.json();
           setAgents(ag.agents || []);
+          setBackendStatus('ok');
           return;
         } catch(e) {
           if (cancelled) return;
           if (i < 9) await new Promise(r => setTimeout(r, 3000));
-          else setError('Backend unavailable — please refresh.');
+          else setBackendStatus('error');
         }
       }
     };
@@ -59,7 +75,6 @@ function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // Poll job status – only when jobId is set
   useEffect(() => {
     if (!jobId) return;
     localStorage.setItem('agentforge:job', jobId);
@@ -72,10 +87,7 @@ function App() {
     };
     fetchJob();
     const interval = setInterval(fetchJob, 5000);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
+    return () => { active = false; clearInterval(interval); };
   }, [jobId]);
 
   const shown = agents.filter(a =>
@@ -86,14 +98,13 @@ function App() {
   async function connect() {
     try {
       setError('');
-      if (!cfg) throw Error('Network configuration is still loading.');
       const eth = (window as any).ethereum;
       if (!eth) throw Error('No browser wallet detected. Install MetaMask or another EVM wallet.');
       const w = createWalletClient({ chain: bscTestnet, transport: custom(eth) });
       const [a] = await w.requestAddresses();
       const chain = await w.getChainId();
       if (chain !== cfg.chainId) {
-        try { await w.switchChain({ id: cfg.chainId }); } catch { throw Error(`Switch wallet to the configured BNB Chain network (chain ${cfg.chainId}).`); }
+        try { await w.switchChain({ id: cfg.chainId }); } catch { throw Error(`Switch wallet to BSC Testnet (chain ${cfg.chainId}).`); }
       }
       setAccount(a);
     } catch (e: any) {
@@ -103,9 +114,7 @@ function App() {
 
   async function persist(id: string, fields: any) {
     const r = await fetch(`${API}/api/jobs/${id}/record`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(fields)
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fields)
     });
     if (!r.ok) throw Error(await r.text());
   }
@@ -116,30 +125,16 @@ function App() {
     setBusy('Resolving verified ERC-8004 identity…');
     try {
       const prepR = await fetch(`${API}/api/hire/prepare`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          agent_id: selected.agentId,
-          agent_registry: selected.agentRegistry,
-          client: account,
-          description: `AgentForge task: execute ${selected.name} using the selected registered agent endpoint and return a structured result.`
-        })
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agent_id: selected.agentId, agent_registry: selected.agentRegistry, client: account, description: `AgentForge task: execute ${selected.name} using the selected registered agent endpoint and return a structured result.` })
       });
       const prep = await prepR.json();
       if (!prepR.ok) throw Error(prep.detail || 'Agent validation failed');
-
       const provider = prep.provider as `0x${string}`;
       const w = createWalletClient({ chain: bscTestnet, transport: custom((window as any).ethereum) });
       const expiry = BigInt(Math.floor(Date.now() / 1000) + 7200);
-
       setBusy('Creating ERC-8183 job…');
-      const tx = await w.writeContract({
-        account,
-        address: cfg.commerce as `0x${string}`,
-        abi: commerceAbi,
-        functionName: 'createJob',
-        args: [provider, cfg.router as `0x${string}`, expiry, `AgentForge:${selected.agentRegistry}:${selected.agentId}`, cfg.router as `0x${string}`]
-      });
+      const tx = await w.writeContract({ account, address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'createJob', args: [provider, cfg.router as `0x${string}`, expiry, `AgentForge:${selected.agentRegistry}:${selected.agentId}`, cfg.router as `0x${string}`] });
       const rc = await pub.waitForTransactionReceipt({ hash: tx });
       if (rc.status !== 'success') throw Error('createJob transaction reverted');
       const logs = parseEventLogs({ abi: commerceAbi, eventName: 'JobCreated', logs: rc.logs });
@@ -147,55 +142,30 @@ function App() {
       if (id === undefined) throw Error('JobCreated event was not found');
       setJobId(id.toString());
       await persist(id.toString(), { agent_id: selected.agentId, agent_registry: selected.agentRegistry, client: account, create_tx: tx });
-
       setBusy('Registering job with ERC-8183 Router…');
-      const rtx = await w.writeContract({
-        account,
-        address: cfg.router as `0x${string}`,
-        abi: routerAbi,
-        functionName: 'registerJob',
-        args: [id, cfg.policy as `0x${string}`]
-      });
+      const rtx = await w.writeContract({ account, address: cfg.router as `0x${string}`, abi: routerAbi, functionName: 'registerJob', args: [id, cfg.policy as `0x${string}`] });
       const rrc = await pub.waitForTransactionReceipt({ hash: rtx });
       if (rrc.status !== 'success') throw Error('registerJob transaction reverted');
       await persist(id.toString(), { register_tx: rtx });
-
       setBusy('Provider is setting the budget…');
       const br = await fetch(`${API}/api/jobs/${id}/budget`, { method: 'POST' });
       const bj = await br.json();
       if (!br.ok) throw Error(bj.detail || 'Provider could not budget this job');
-
       const token = await pub.readContract({ address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'paymentToken' });
       const decimals = await pub.readContract({ address: token as `0x${string}`, abi: erc20Abi, functionName: 'decimals' });
       const amount = 10n ** BigInt(decimals);
-
       setBusy('Approving settlement token on-chain…');
-      const atx = await w.writeContract({
-        account,
-        address: token as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [cfg.commerce as `0x${string}`, amount]
-      });
+      const atx = await w.writeContract({ account, address: token as `0x${string}`, abi: erc20Abi, functionName: 'approve', args: [cfg.commerce as `0x${string}`, amount] });
       const arc = await pub.waitForTransactionReceipt({ hash: atx });
       if (arc.status !== 'success') throw Error('Token approval reverted');
       await persist(id.toString(), { approval_tx: atx });
-
       setBusy('Funding ERC-8183 escrow…');
-      const ftx = await w.writeContract({
-        account,
-        address: cfg.commerce as `0x${string}`,
-        abi: commerceAbi,
-        functionName: 'fund',
-        args: [id, amount, '0x']
-      });
+      const ftx = await w.writeContract({ account, address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'fund', args: [id, amount, '0x'] });
       const frc = await pub.waitForTransactionReceipt({ hash: ftx });
       if (frc.status !== 'success') throw Error('Funding transaction reverted');
       await persist(id.toString(), { fund_tx: ftx });
-
       const onchain = await pub.readContract({ address: cfg.commerce as `0x${string}`, abi: commerceAbi, functionName: 'getJob', args: [id] });
       if (onchain.status !== 1) throw Error(`Funding receipt succeeded but job state is ${onchain.status}, not Funded`);
-
     } catch (e: any) {
       setError(e.shortMessage || e.message || String(e));
     } finally {
@@ -210,8 +180,10 @@ function App() {
       <header>
         <div className="brand"><span>AGENT</span>FORGE</div>
         <div className="network">BSC {cfg?.network === 'bsc-mainnet' ? 'MAINNET' : 'TESTNET'} <i /></div>
-        <button onClick={connect} className="wallet" disabled={!cfg}>
-          {!cfg ? 'Loading…' : account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}
+        {backendStatus === 'loading' && <span style={{fontSize:'12px',opacity:0.6}}>connecting…</span>}
+        {backendStatus === 'error' && <span style={{fontSize:'12px',color:'#f87171'}}>backend unreachable</span>}
+        <button onClick={connect} className="wallet">
+          {account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}
         </button>
       </header>
       <main>

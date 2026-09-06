@@ -1,4 +1,4 @@
-kimport asyncio
+import asyncio
 import json
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -192,8 +192,6 @@ HARDCODED_AGENTS = [
 
 @app.get('/api/agents')
 async def agents(limit: int = 100):
-    # Always return the hardcoded agents – this guarantees the frontend sees something.
-    # Once discovery is fixed, you can replace this with the real logic.
     return {'agents': HARDCODED_AGENTS[:limit]}
 
 @app.get('/api/agents/{agent_id}')
@@ -201,7 +199,6 @@ async def agent(agent_id: str):
     for a in HARDCODED_AGENTS:
         if a['agentId'] == agent_id:
             return a
-    # Fallback to real discovery if hardcoded fails
     try:
         return await get_agent(int(agent_id))
     except Exception as e:
@@ -210,7 +207,6 @@ async def agent(agent_id: str):
 @app.post('/api/hire/prepare')
 async def prepare(h: Hire):
     try:
-        # Find agent in hardcoded list first (faster)
         agent = next((a for a in HARDCODED_AGENTS if a['agentId'] == h.agent_id), None)
         if not agent:
             agent = await get_agent(int(h.agent_id))
@@ -250,7 +246,6 @@ async def record(job_id: int, h: TxRecord):
     fields = h.model_dump(exclude_none=True)
     fields.pop('description', None)
     if h.agent_id and h.agent_registry:
-        # Use hardcoded check if available
         agent = next((a for a in HARDCODED_AGENTS if a['agentId'] == h.agent_id), None)
         if not agent:
             agent = await get_agent(int(h.agent_id))

@@ -68,6 +68,21 @@ async def health():
 async def config():
     return {**network, 'network': settings.network}
 
+# ----- TRACK METADATA (generic endpoint) -----
+TRACK_META = {
+    'rebalancing': {'name': 'Rebalancing', 'description': 'Automated portfolio rebalancing agents'},
+    'grid-trading': {'name': 'Grid Trading', 'description': 'Grid strategy and DCA agents'},
+    'yield-optimisation': {'name': 'Yield Optimisation', 'description': 'APR/APY yield farming agents'},
+    'yield-optimization': {'name': 'Yield Optimisation', 'description': 'APR/APY yield farming agents'},  # alias
+    'health-factor-monitoring': {'name': 'Health Factor Monitoring', 'description': 'Liquidation risk monitoring agents'},
+}
+
+@app.get('/api/metadata/{track}')
+async def track_metadata(track: str):
+    if track not in TRACK_META:
+        raise HTTPException(404, f'Unknown track: {track}')
+    return TRACK_META[track]
+
 # ----- MOCK AGENT EXECUTION ENDPOINTS (for testing) -----
 @app.post('/agent/rebalancing')
 async def agent_rebalancing(payload: dict):
@@ -85,7 +100,7 @@ async def agent_yield_optimisation(payload: dict):
 async def agent_health_factor_monitoring(payload: dict):
     return {"result": f"Health factor monitoring executed for task: {payload.get('task', 'no task')}"}
 
-# ----- METADATA ENDPOINTS -----
+# ----- METADATA ENDPOINTS (specific, for agent registration) -----
 @app.get('/api/metadata/rebalancing')
 async def rebalancing_metadata():
     return {
@@ -130,7 +145,7 @@ async def health_factor_monitoring_metadata():
         'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/health-factor-monitoring'}]
     }
 
-# ----- HARDCODED AGENTS – fallback if discovery fails (UPDATED IDs 2188-2191) -----
+# ----- HARDCODED AGENTS (fallback) -----
 HARDCODED_AGENTS = [
     {
         'key': f'eip155:97:{network["identityRegistry"]}:2188',
@@ -171,7 +186,7 @@ HARDCODED_AGENTS = [
         'owner': settings.provider_address or '0x0000000000000000000000000000000000000000',
         'agentWallet': settings.provider_address or '0x0000000000000000000000000000000000000000',
         'identityVerified': True,
-        'categories': ['yield-optimization'],
+        'categories': ['yield-optimisation'],
         'skills': ['yield', 'apr', 'liquidity'],
         'endpoints': [{'type': 'http', 'url': f'https://agentforge-v2-api.onrender.com/agent/yield-optimisation'}],
         'reputation': None,

@@ -8,7 +8,7 @@ type Agent = { key: string; agentId: string; agentRegistry: string; name: string
 type RuntimeConfig = { chainId: number; identityRegistry: string; commerce: string; router: string; policy: string; rpc: string; network: string };
 type JobRecord = { status: string; result?: any; chain?: { statusName: string; budget: number; submitted_at: number; expired_at: number; deliverable: string; provider: string; client: string }; error?: string; create_tx?: string; register_tx?: string; budget_tx?: string; approval_tx?: string; fund_tx?: string; submit_tx?: string; settle_tx?: string };
 
-const API = import.meta.env.VITE_API_URL ?? 'https://agentforge-v2-api.onrender.com';
+const API = import.meta.env.DEV ? (import.meta.env.VITE_API_URL ?? 'https://agentforge-v2-api.onrender.com') : '/backend';
 const API_WAKE_TIMEOUT = 90000;
 const API_REQUEST_TIMEOUT = 30000;
 const REGISTRY = 'eip155:97:0x8004A818BFB912233c491871b3d84c89A494BD9e';
